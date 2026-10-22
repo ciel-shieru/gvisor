@@ -9,6 +9,8 @@ go_library(
     srcs = [
         "i915proxy.go",
         "ioctl_unsafe.go",
+        "mmap.go",
+        "mmap_unsafe.go",
         "seccomp_filters.go",
     ],
     visibility = [
@@ -24,9 +26,12 @@ go_library(
         "//pkg/hostarch",
         "//pkg/log",
         "//pkg/seccomp",
+        "//pkg/safemem",
         "//pkg/sentry/arch",
+        "//pkg/sentry/fsutil",
         "//pkg/sentry/kernel",
         "//pkg/sentry/kernel/auth",
+        "//pkg/sentry/memmap",
         "//pkg/sentry/vfs",
         "//pkg/usermem",
         "@org_golang_x_sys//unix:go_default_library",
