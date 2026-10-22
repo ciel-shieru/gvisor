@@ -59,6 +59,13 @@ const (
 	drmIoctlGetMagic = uintptr(linux.IOR('d', 0x02, drmMagicSize))
 	drmIoctlGetCap = uintptr(linux.IOWR('d', 0x0c, drmGetCapSize))
 	drmIoctlSetClientCap = uintptr(linux.IOW('d', 0x0d, drmSetClientCapSize))
+	drmIoctlGemClose = uintptr(linux.IOW('d', 0x09, 8))
+	drmIoctlI915GetParam = uintptr(linux.IOWR('d', 0x46, 16))
+	drmIoctlI915GemCreate = uintptr(linux.IOWR('d', 0x67, 16))
+	drmIoctlI915GemBusy = uintptr(linux.IOWR('d', 0x57, 8))
+	drmIoctlI915GemSetDomain = uintptr(linux.IOW('d', 0x5f, 12))
+	drmIoctlI915GemSetTiling = uintptr(linux.IOWR('d', 0x61, 16))
+	drmIoctlI915GemGetTiling = uintptr(linux.IOWR('d', 0x62, 16))
 )
 
 // Device describes a render node assigned to a container. Path must name the
