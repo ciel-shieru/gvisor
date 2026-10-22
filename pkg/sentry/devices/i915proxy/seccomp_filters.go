@@ -28,6 +28,13 @@ func Filters() seccomp.SyscallRules {
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlGetCap)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlSetClientCap)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlGetMagic)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlGemClose)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GetParam)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemCreate)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemBusy)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemSetDomain)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemSetTiling)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemGetTiling)},
 		}),
 	})
 }
