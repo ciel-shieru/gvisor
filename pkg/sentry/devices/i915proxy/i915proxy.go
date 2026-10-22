@@ -199,6 +199,8 @@ func (dev *renderDevice) Open(ctx context.Context, mnt *vfs.Mount, d *vfs.Dentry
 	}); err != nil {
 		return nil, err
 	}
+	fd.memmapFile.SetFD(int(hostFD))
+	fd.memmapFile.MmapFileRefs.Closer = &fd.memmapFile
 	closeHostFD = false
 	return &fd.vfsfd, nil
 }
@@ -213,11 +215,12 @@ type renderFD struct {
 	vfs.NoLockFD
 
 	hostFD int32
+	memmapFile renderMemmapFile
 }
 
 // Release implements vfs.FileDescriptionImpl.Release.
 func (fd *renderFD) Release(context.Context) {
-	_ = unix.Close(int(fd.hostFD))
+	fd.memmapFile.MappableRelease()
 }
 
 // Ioctl implements vfs.FileDescriptionImpl.Ioctl.
