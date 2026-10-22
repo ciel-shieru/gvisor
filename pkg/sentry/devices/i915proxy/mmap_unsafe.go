@@ -25,6 +25,8 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 )
 
+const maxInternalMapPages = 1 << 16
+
 // MapInternal implements memmap.File.MapInternal.
 func (mf *renderMemmapFile) MapInternal(fr memmap.FileRange, at hostarch.AccessType) (safemem.BlockSeq, error) {
 	if at.Execute {
@@ -40,19 +42,32 @@ func (mf *renderMemmapFile) MapInternal(fr memmap.FileRange, at hostarch.AccessT
 		return safemem.BlockSeq{}, linuxerr.EOVERFLOW
 	}
 	end := (fr.End + pageSize - 1) &^ (pageSize - 1)
-	blocks := make([]safemem.Block, 0, (end-start)/pageSize)
+	pageCount := (end - start) / pageSize
+	if pageCount > maxInternalMapPages {
+		return safemem.BlockSeq{}, linuxerr.E2BIG
+	}
+	blocks := make([]safemem.Block, 0, int(pageCount))
 
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
+	if !mf.fdValid || mf.fd < 0 {
+		return safemem.BlockSeq{}, linuxerr.EBADF
+	}
+	if mf.pages == nil {
+		mf.pages = make(map[uint64][]byte)
+	}
+	var newPages uint64
 	for off := start; off < end; off += pageSize {
-		if mf.pageRefs[off] <= 0 {
-			return safemem.BlockSeq{}, linuxerr.EINVAL
+		if _, ok := mf.pages[off]; !ok {
+			newPages++
 		}
+	}
+	if uint64(len(mf.pages))+newPages > maxInternalMapPages {
+		return safemem.BlockSeq{}, linuxerr.E2BIG
+	}
+	for off := start; off < end; off += pageSize {
 		page, ok := mf.pages[off]
 		if !ok {
-			if mf.fd < 0 {
-				return safemem.BlockSeq{}, linuxerr.EBADF
-			}
 			var err error
 			page, err = unix.Mmap(int(mf.fd), int64(off), int(hostarch.PageSize), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 			if err != nil {
