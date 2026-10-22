@@ -16,6 +16,7 @@ package i915proxy
 
 import (
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/seccomp"
 )
 
@@ -35,6 +36,22 @@ func Filters() seccomp.SyscallRules {
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemSetDomain)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemSetTiling)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemGetTiling)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemMmapGTT)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemMmapOffset)},
 		}),
+		unix.SYS_MMAP: seccomp.PerArg{
+			seccomp.AnyValue{},
+			seccomp.AnyValue{},
+			seccomp.AnyValue{},
+			seccomp.EqualTo(unix.MAP_SHARED | unix.MAP_FIXED_NOREPLACE),
+		},
+		unix.SYS_MREMAP: seccomp.PerArg{
+			seccomp.AnyValue{},
+			seccomp.EqualTo(0),
+			seccomp.AnyValue{},
+			seccomp.EqualTo(linux.MREMAP_MAYMOVE | linux.MREMAP_FIXED),
+			seccomp.AnyValue{},
+			seccomp.EqualTo(0),
+		},
 	})
 }
