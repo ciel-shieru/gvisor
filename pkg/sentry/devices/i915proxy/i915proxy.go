@@ -68,6 +68,8 @@ const (
 	drmIoctlI915GemGetTiling = uintptr(linux.IOWR('d', 0x62, 16))
 	drmIoctlI915GemMmapGTT = uintptr(linux.IOWR('d', 0x64, 16))
 	drmIoctlI915GemMmapOffset = uintptr(linux.IOWR('d', 0x64, 32))
+	drmIoctlI915GemExecbuffer2 = uintptr(linux.IOW('d', 0x69, 64))
+	drmIoctlI915GemExecbuffer2WR = uintptr(linux.IOWR('d', 0x69, 64))
 )
 
 // Device describes a render node assigned to a container. Path must name the
@@ -258,6 +260,8 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlGemMmapOffset(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GetParam:
 		return fd.ioctlGetParam(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
+	case drmIoctlI915GemExecbuffer2, drmIoctlI915GemExecbuffer2WR:
+		return fd.ioctlExecbuffer2(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	default:
 		return 0, linuxerr.ENOTTY
 	}
@@ -279,6 +283,103 @@ func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Add
 	}
 	if copyOut {
 		if _, err := task.CopyOutBytes(addr, data); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+const (
+	maxExecBufferObjects = 16384
+	maxExecBufferRelocations = 65536
+	maxExecBufferFences = 4096
+	i915ExecObject2Size = 56
+	i915RelocationEntrySize = 32
+	i915ExecFenceSize = 8
+	i915ExecFenceArrayFlag = uint64(1 << 19)
+	i915ExecUseExtensionsFlag = uint64(1 << 21)
+)
+
+func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 64 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	objectsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
+	objectCount := binary.LittleEndian.Uint32(params[8:12])
+	if objectCount == 0 || objectCount > maxExecBufferObjects || objectsAddr == 0 {
+		return 0, linuxerr.EINVAL
+	}
+	objects := make([]byte, int(objectCount)*i915ExecObject2Size)
+	if _, err := task.CopyInBytes(objectsAddr, objects); err != nil {
+		return 0, err
+	}
+
+	relocations := make([][]byte, int(objectCount))
+	relocationAddrs := make([]hostarch.Addr, int(objectCount))
+	totalRelocations := uint32(0)
+	for i := 0; i < int(objectCount); i++ {
+		base := i * i915ExecObject2Size
+		count := binary.LittleEndian.Uint32(objects[base+4 : base+8])
+		ptr := hostarch.Addr(binary.LittleEndian.Uint64(objects[base+8 : base+16]))
+		if count > maxExecBufferRelocations-totalRelocations {
+			return 0, linuxerr.E2BIG
+		}
+		totalRelocations += count
+		if count == 0 {
+			continue
+		}
+		if ptr == 0 {
+			return 0, linuxerr.EFAULT
+		}
+		relocationAddrs[i] = ptr
+		relocations[i] = make([]byte, int(count)*i915RelocationEntrySize)
+		if _, err := task.CopyInBytes(ptr, relocations[i]); err != nil {
+			return 0, err
+		}
+	}
+
+	fenceCount := binary.LittleEndian.Uint32(params[28:32])
+	fencePtr := hostarch.Addr(binary.LittleEndian.Uint64(params[32:40]))
+	flags := binary.LittleEndian.Uint64(params[40:48])
+	var fences []byte
+	if flags&i915ExecUseExtensionsFlag != 0 && fencePtr != 0 {
+		// Extension chains contain nested, versioned pointers. They are not
+		// forwarded until each supported extension has an explicit translator.
+		return 0, linuxerr.EINVAL
+	}
+	if fenceCount != 0 {
+		if flags&i915ExecFenceArrayFlag == 0 || fenceCount > maxExecBufferFences || fencePtr == 0 {
+			return 0, linuxerr.EINVAL
+		}
+		fences = make([]byte, int(fenceCount)*i915ExecFenceSize)
+		if _, err := task.CopyInBytes(fencePtr, fences); err != nil {
+			return 0, err
+		}
+	} else if flags&i915ExecFenceArrayFlag != 0 && fencePtr != 0 {
+		return 0, linuxerr.EINVAL
+	}
+
+	n, err := hostIoctlI915Execbuffer2(fd.hostFD, cmd, params, objects, relocations, fences)
+	if err != nil {
+		return n, err
+	}
+	for i, relocs := range relocations {
+		if len(relocs) == 0 {
+			continue
+		}
+		if _, err := task.CopyOutBytes(relocationAddrs[i], relocs); err != nil {
+			return n, err
+		}
+	}
+	if _, err := task.CopyOutBytes(objectsAddr, objects); err != nil {
+		return n, err
+	}
+	if cmd == drmIoctlI915GemExecbuffer2WR {
+		if _, err := task.CopyOutBytes(addr, params); err != nil {
 			return n, err
 		}
 	}
