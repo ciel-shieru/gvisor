@@ -83,6 +83,19 @@ func TestSupportedIoctl(t *testing.T) {
 		drmIoctlI915GemMmapOffset,
 		drmIoctlI915GemExecbuffer2,
 		drmIoctlI915GemExecbuffer2WR,
+		drmIoctlI915GemWait,
+		drmIoctlI915GemContextCreate,
+		drmIoctlI915GemContextCreateExt,
+		drmIoctlI915GemContextDestroy,
+		drmIoctlI915GemSetCaching,
+		drmIoctlI915GemGetCaching,
+		drmIoctlI915GetResetStats,
+		drmIoctlI915GemContextGetParam,
+		drmIoctlI915GemContextSetParam,
+		drmIoctlI915Query,
+		drmIoctlI915GemVMCreate,
+		drmIoctlI915GemVMDestroy,
+		drmIoctlI915GemCreateExt,
 	} {
 		if !SupportedIoctl(cmd) {
 			t.Errorf("SupportedIoctl(%#x) = false, want true", cmd)
