@@ -193,7 +193,6 @@ func (mf *renderMemmapFile) Close() error {
 		}
 		delete(mf.pages, off)
 	}
-	mf.pageRefs = nil
 	fd := mf.fd
 	fdValid := mf.fdValid
 	mf.fd = -1
