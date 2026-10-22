@@ -39,7 +39,7 @@ func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) er
 	}
 	// Use a per-mapping mappable so KVM page tables use the cache type
 	// requested when the mmap offset was obtained.
-	return vfs.GenericProxyDeviceConfigureMMap(&fd.vfsfd, &renderMappable{
+	return vfs.GenericProxyDeviceConfigureMMap(&fd.vfsfd, renderMappable{
 		file: &fd.memmapFile,
 	}, opts)
 }
@@ -53,7 +53,7 @@ type renderMappable struct {
 }
 
 // Translate implements memmap.Mappable.Translate.
-func (m *renderMappable) Translate(_ context.Context, _, optional memmap.MappableRange, _ hostarch.AccessType) ([]memmap.Translation, error) {
+func (m renderMappable) Translate(_ context.Context, _, optional memmap.MappableRange, _ hostarch.AccessType) ([]memmap.Translation, error) {
 	memoryType, err := m.file.memoryTypeForRange(optional.Start, optional.Length())
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func (mf *renderMemmapFile) Close() error {
 }
 
 // InvalidateUnsavable implements memmap.Mappable.InvalidateUnsavable.
-func (m *renderMappable) InvalidateUnsavable(context.Context) error {
+func (m renderMappable) InvalidateUnsavable(context.Context) error {
 	// The proxy does not implement host FD, mmap-offset, or GPU execution
 	// state restoration. Do not permit checkpointing a live GPU mapping.
 	return linuxerr.EBUSY
