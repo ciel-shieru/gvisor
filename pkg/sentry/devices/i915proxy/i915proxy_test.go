@@ -79,7 +79,7 @@ func TestSupportedIoctl(t *testing.T) {
 	}
 	for _, cmd := range []uintptr{
 		0,
-		0xc0406469, // DRM_IOCTL_I915_GEM_EXECBUFFER2 on one common ABI.
+		0x40406469, // DRM_IOCTL_I915_GEM_EXECBUFFER2 (64-byte _IOW payload).
 		0xc0106440, // Unimplemented DRM ioctl.
 	} {
 		if SupportedIoctl(cmd) {
