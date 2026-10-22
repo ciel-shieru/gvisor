@@ -1322,6 +1322,7 @@ func (l *Loader) installSeccompFilters() error {
 			HostNetworkRawSockets: hostnet && l.root.conf.EnableRaw,
 			HostFilesystem:        l.root.conf.DirectFS,
 			ProfileEnable:         l.root.conf.ProfileEnable,
+			I915Proxy:             specutils.I915ProxyEnabled(l.root.spec, l.root.conf),
 			NVProxy:               nvproxyEnabled,
 			NVProxyCaps:           nvproxyCaps,
 			TPUProxy:              specutils.TPUProxyEnabled(l.root.spec, l.root.conf),
