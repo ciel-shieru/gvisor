@@ -37,6 +37,53 @@ func hostIoctl(fd int32, cmd uintptr, params []byte) (uintptr, error) {
 	return n, nil
 }
 
+// hostIoctlI915Execbuffer2 translates every pointer in the base execbuffer2
+// structure, the exec-object array, and its relocation arrays to Sentry-owned
+// buffers. Extension chains are rejected by the caller.
+func hostIoctlI915Execbuffer2(fd int32, cmd uintptr, params, objects []byte, relocations [][]byte, fences []byte) (uintptr, error) {
+	if len(params) != 64 || len(objects) == 0 || len(objects)%i915ExecObject2Size != 0 || len(relocations) != len(objects)/i915ExecObject2Size {
+		return 0, unix.EINVAL
+	}
+	var originalBuffersPtr [8]byte
+	var originalFencesPtr [8]byte
+	copy(originalBuffersPtr[:], params[0:8])
+	copy(originalFencesPtr[:], params[32:40])
+	originalRelocPtrs := make([][8]byte, len(relocations))
+	for i, relocs := range relocations {
+		off := i*i915ExecObject2Size + 8
+		copy(originalRelocPtrs[i][:], objects[off:off+8])
+		if len(relocs) == 0 {
+			binary.LittleEndian.PutUint64(objects[off:off+8], 0)
+			continue
+		}
+		binary.LittleEndian.PutUint64(objects[off:off+8], uint64(uintptr(unsafe.Pointer(&relocs[0]))))
+	}
+	binary.LittleEndian.PutUint64(params[0:8], uint64(uintptr(unsafe.Pointer(&objects[0]))))
+	if len(fences) == 0 {
+		binary.LittleEndian.PutUint64(params[32:40], 0)
+	} else {
+		binary.LittleEndian.PutUint64(params[32:40], uint64(uintptr(unsafe.Pointer(&fences[0]))))
+	}
+	defer func() {
+		copy(params[0:8], originalBuffersPtr[:])
+		copy(params[32:40], originalFencesPtr[:])
+		for i := range originalRelocPtrs {
+			off := i*i915ExecObject2Size + 8
+			copy(objects[off:off+8], originalRelocPtrs[i][:])
+		}
+	}()
+
+	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	runtime.KeepAlive(params)
+	runtime.KeepAlive(objects)
+	runtime.KeepAlive(relocations)
+	runtime.KeepAlive(fences)
+	if errno != 0 {
+		return n, errno
+	}
+	return n, nil
+}
+
 // hostIoctlI915GetParam translates drm_i915_getparam.value to a Sentry-owned
 // integer buffer. The pointer in the ioctl structure never refers to application
 // memory while the host kernel is handling the request.
