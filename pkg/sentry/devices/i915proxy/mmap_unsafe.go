@@ -87,3 +87,8 @@ func (mf *renderMemmapFile) MapInternal(fr memmap.FileRange, at hostarch.AccessT
 	}
 	return safemem.BlockSeqOf(blocks...), nil
 }
+
+// MapInternal implements memmap.File.MapInternal for a cache-type-specific view.
+func (mf *renderMappedFile) MapInternal(fr memmap.FileRange, at hostarch.AccessType) (safemem.BlockSeq, error) {
+	return mf.file.MapInternal(fr, at)
+}
