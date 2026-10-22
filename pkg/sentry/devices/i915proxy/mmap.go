@@ -79,11 +79,11 @@ type renderMemmapFile struct {
 
 	// fd is the host DRM render-node file descriptor. It remains open until
 	// the last mapping reference is released.
-	fd int32
+	fd int32 `state:"nosave"`
+	fdValid bool `state:"nosave"`
 
-	// mu protects the mapping references, host mappings, and mmap offset types.
+	// mu protects the host mappings and mmap offset types.
 	mu sync.Mutex `state:"nosave"`
-	pageRefs map[uint64]int64 `state:"nosave"`
 	pages map[uint64][]byte `state:"nosave"`
 	offsetTypes map[uint64]hostarch.MemoryType `state:"nosave"`
 }
@@ -91,46 +91,18 @@ type renderMemmapFile struct {
 // SetFD implements fsutil.MmapFile.SetFD.
 func (mf *renderMemmapFile) SetFD(fd int) {
 	mf.fd = int32(fd)
+	mf.fdValid = true
 }
 
 // IncRef implements memmap.File.IncRef.
 func (mf *renderMemmapFile) IncRef(fr memmap.FileRange, memCgID uint32) {
 	mf.MmapFileRefs.IncRef(fr, memCgID)
-	mf.mu.Lock()
-	defer mf.mu.Unlock()
-	if mf.pageRefs == nil {
-		mf.pageRefs = make(map[uint64]int64)
-	}
-	if mf.pages == nil {
-		mf.pages = make(map[uint64][]byte)
-	}
-	for off := fr.Start; off < fr.End; off += uint64(hostarch.PageSize) {
-		mf.pageRefs[off]++
-	}
 }
 
 // DecRef implements memmap.File.DecRef.
 func (mf *renderMemmapFile) DecRef(fr memmap.FileRange) {
-	mf.mu.Lock()
-	for off := fr.Start; off < fr.End; off += uint64(hostarch.PageSize) {
-		refs := mf.pageRefs[off]
-		if refs <= 0 {
-			mf.mu.Unlock()
-			panic(fmt.Sprintf("i915proxy: mapping reference underflow at %#x", off))
-		}
-		if refs > 1 {
-			mf.pageRefs[off] = refs - 1
-			continue
-		}
-		delete(mf.pageRefs, off)
-		if page, ok := mf.pages[off]; ok {
-			if err := unix.Munmap(page); err != nil {
-				log.Warningf("i915proxy: munmap %#x failed: %v", off, err)
-			}
-			delete(mf.pages, off)
-		}
-	}
-	mf.mu.Unlock()
+	// Keep host mappings cached until the file description and all mappings
+	// are released. MapInternal limits the total number of cached pages.
 	mf.MmapFileRefs.DecRef(fr)
 }
 
@@ -141,12 +113,21 @@ func (mf *renderMemmapFile) MappableRelease() {
 
 // FD implements memmap.File.FD.
 func (mf *renderMemmapFile) FD() int {
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	if !mf.fdValid {
+		return -1
+	}
 	return int(mf.fd)
 }
 
 // DataFD implements memmap.File.DataFD.
 func (mf *renderMemmapFile) DataFD(memmap.FileRange) (int, error) {
-	return int(mf.fd), nil
+	fd := mf.FD()
+	if fd < 0 {
+		return -1, linuxerr.EBADF
+	}
+	return fd, nil
 }
 
 // MemoryType implements memmap.File.MemoryType.
@@ -215,14 +196,23 @@ func (mf *renderMemmapFile) Close() error {
 	}
 	mf.pageRefs = nil
 	fd := mf.fd
+	fdValid := mf.fdValid
 	mf.fd = -1
+	mf.fdValid = false
 	mf.mu.Unlock()
-	if fd >= 0 {
+	if fdValid && fd >= 0 {
 		if err := unix.Close(fd); err != nil {
 			errs = append(errs, fmt.Errorf("close host DRM fd: %w", err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// InvalidateUnsavable implements memmap.Mappable.InvalidateUnsavable.
+func (m *renderMappable) InvalidateUnsavable(context.Context) error {
+	// The proxy does not implement host FD, mmap-offset, or GPU execution
+	// state restoration. Do not permit checkpointing a live GPU mapping.
+	return linuxerr.EBUSY
 }
 
 // renderMappedFile supplies per-mapping cache attributes while sharing the
