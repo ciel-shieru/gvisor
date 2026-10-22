@@ -37,6 +37,26 @@ func hostIoctl(fd int32, cmd uintptr, params []byte) (uintptr, error) {
 	return n, nil
 }
 
+// hostIoctlI915GetParam translates drm_i915_getparam.value to a Sentry-owned
+// integer buffer. The pointer in the ioctl structure never refers to application
+// memory while the host kernel is handling the request.
+func hostIoctlI915GetParam(fd int32, cmd uintptr, params, value []byte) (uintptr, error) {
+	if len(params) != 16 || len(value) != 4 {
+		return 0, unix.EINVAL
+	}
+	var original [8]byte
+	copy(original[:], params[8:16])
+	binary.LittleEndian.PutUint64(params[8:16], uint64(uintptr(unsafe.Pointer(&value[0]))))
+	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	copy(params[8:16], original[:])
+	runtime.KeepAlive(params)
+	runtime.KeepAlive(value)
+	if errno != 0 {
+		return n, errno
+	}
+	return n, nil
+}
+
 // hostIoctlVersion translates the three pointer fields in struct drm_version
 // to Sentry-owned buffers for the duration of the host ioctl. It restores the
 // guest pointer values before returning so the caller can safely copy the
