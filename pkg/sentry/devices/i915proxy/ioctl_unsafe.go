@@ -84,6 +84,42 @@ func hostIoctlI915Execbuffer2(fd int32, cmd uintptr, params, objects []byte, rel
 	return n, nil
 }
 
+// hostIoctlI915Query translates the i915 query list and each query's payload
+// pointer to Sentry-owned memory. Guest pointers are restored before returning.
+func hostIoctlI915Query(fd int32, cmd uintptr, params, items []byte, buffers [][]byte) (uintptr, error) {
+	if len(params) != 16 || len(items) == 0 || len(items)%i915QueryItemSize != 0 || len(buffers) != len(items)/i915QueryItemSize {
+		return 0, unix.EINVAL
+	}
+	var originalItemsPtr [8]byte
+	copy(originalItemsPtr[:], params[8:16])
+	originalDataPtrs := make([][8]byte, len(buffers))
+	for i, buf := range buffers {
+		off := i*i915QueryItemSize + 16
+		copy(originalDataPtrs[i][:], items[off:off+8])
+		if len(buf) == 0 {
+			binary.LittleEndian.PutUint64(items[off:off+8], 0)
+			continue
+		}
+		binary.LittleEndian.PutUint64(items[off:off+8], uint64(uintptr(unsafe.Pointer(&buf[0]))))
+	}
+	binary.LittleEndian.PutUint64(params[8:16], uint64(uintptr(unsafe.Pointer(&items[0]))))
+	defer func() {
+		copy(params[8:16], originalItemsPtr[:])
+		for i := range originalDataPtrs {
+			off := i*i915QueryItemSize + 16
+			copy(items[off:off+8], originalDataPtrs[i][:])
+		}
+	}()
+	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	runtime.KeepAlive(params)
+	runtime.KeepAlive(items)
+	runtime.KeepAlive(buffers)
+	if errno != 0 {
+		return n, errno
+	}
+	return n, nil
+}
+
 // hostIoctlI915GetParam translates drm_i915_getparam.value to a Sentry-owned
 // integer buffer. The pointer in the ioctl structure never refers to application
 // memory while the host kernel is handling the request.
