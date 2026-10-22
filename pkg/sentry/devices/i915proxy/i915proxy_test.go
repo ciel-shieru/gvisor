@@ -72,6 +72,17 @@ func TestSupportedIoctl(t *testing.T) {
 		drmIoctlGetMagic,
 		drmIoctlGetCap,
 		drmIoctlSetClientCap,
+		drmIoctlGemClose,
+		drmIoctlI915GetParam,
+		drmIoctlI915GemCreate,
+		drmIoctlI915GemBusy,
+		drmIoctlI915GemSetDomain,
+		drmIoctlI915GemSetTiling,
+		drmIoctlI915GemGetTiling,
+		drmIoctlI915GemMmapGTT,
+		drmIoctlI915GemMmapOffset,
+		drmIoctlI915GemExecbuffer2,
+		drmIoctlI915GemExecbuffer2WR,
 	} {
 		if !SupportedIoctl(cmd) {
 			t.Errorf("SupportedIoctl(%#x) = false, want true", cmd)
@@ -79,7 +90,7 @@ func TestSupportedIoctl(t *testing.T) {
 	}
 	for _, cmd := range []uintptr{
 		0,
-		0x40406469, // DRM_IOCTL_I915_GEM_EXECBUFFER2 (64-byte _IOW payload).
+		0x40406468, // Unimplemented DRM ioctl of the same size.
 		0xc0106440, // Unimplemented DRM ioctl.
 	} {
 		if SupportedIoctl(cmd) {
