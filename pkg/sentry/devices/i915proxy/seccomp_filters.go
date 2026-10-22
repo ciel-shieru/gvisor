@@ -38,6 +38,8 @@ func Filters() seccomp.SyscallRules {
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemGetTiling)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemMmapGTT)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemMmapOffset)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemExecbuffer2)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemExecbuffer2WR)},
 		}),
 		unix.SYS_MMAP: seccomp.PerArg{
 			seccomp.AnyValue{},
