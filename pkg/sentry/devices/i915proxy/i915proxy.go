@@ -66,6 +66,8 @@ const (
 	drmIoctlI915GemSetDomain = uintptr(linux.IOW('d', 0x5f, 12))
 	drmIoctlI915GemSetTiling = uintptr(linux.IOWR('d', 0x61, 16))
 	drmIoctlI915GemGetTiling = uintptr(linux.IOWR('d', 0x62, 16))
+	drmIoctlI915GemMmapGTT = uintptr(linux.IOWR('d', 0x64, 16))
+	drmIoctlI915GemMmapOffset = uintptr(linux.IOWR('d', 0x64, 32))
 )
 
 // Device describes a render node assigned to a container. Path must name the
@@ -147,7 +149,8 @@ func SupportedIoctl(cmd uintptr) bool {
 	case drmIoctlVersion, drmIoctlGetMagic, drmIoctlGetCap, drmIoctlSetClientCap,
 		drmIoctlGemClose, drmIoctlI915GetParam, drmIoctlI915GemCreate,
 		drmIoctlI915GemBusy, drmIoctlI915GemSetDomain,
-		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
+		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling,
+		drmIoctlI915GemMmapGTT, drmIoctlI915GemMmapOffset:
 		return true
 	default:
 		return false
@@ -246,6 +249,10 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 12, false)
 	case drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GemMmapGTT:
+		return fd.ioctlGemMmapGTT(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
+	case drmIoctlI915GemMmapOffset:
+		return fd.ioctlGemMmapOffset(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GetParam:
 		return fd.ioctlGetParam(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	default:
@@ -271,6 +278,70 @@ func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Add
 		if _, err := task.CopyOutBytes(addr, data); err != nil {
 			return n, err
 		}
+	}
+	return n, nil
+}
+
+func (fd *renderFD) ioctlGemMmapGTT(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 16 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMmapGTT, params)
+	if err != nil {
+		return n, err
+	}
+	offset := binary.LittleEndian.Uint64(params[8:16])
+	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine); err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 32 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	// Extensions are user pointers. This implementation supports only the
+	// pointer-free base structure until every extension has a reviewed handler.
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 || binary.LittleEndian.Uint64(params[24:32]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	var memoryType hostarch.MemoryType
+	switch binary.LittleEndian.Uint64(params[16:24]) {
+	case 0: // I915_MMAP_OFFSET_GTT
+		memoryType = hostarch.MemoryTypeWriteCombine
+	case 1: // I915_MMAP_OFFSET_WC
+		memoryType = hostarch.MemoryTypeWriteCombine
+	case 2: // I915_MMAP_OFFSET_WB
+		memoryType = hostarch.MemoryTypeWriteBack
+	case 3: // I915_MMAP_OFFSET_UC
+		memoryType = hostarch.MemoryTypeUncached
+	default:
+		// In particular, I915_MMAP_OFFSET_FIXED depends on object placement
+		// and cannot be represented safely by one generic cache type.
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMmapOffset, params)
+	if err != nil {
+		return n, err
+	}
+	offset := binary.LittleEndian.Uint64(params[8:16])
+	if err := fd.memmapFile.recordOffset(offset, memoryType); err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
 	}
 	return n, nil
 }
