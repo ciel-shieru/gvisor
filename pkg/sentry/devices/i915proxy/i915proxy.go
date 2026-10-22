@@ -70,6 +70,19 @@ const (
 	drmIoctlI915GemMmapOffset = uintptr(linux.IOWR('d', 0x64, 32))
 	drmIoctlI915GemExecbuffer2 = uintptr(linux.IOW('d', 0x69, 64))
 	drmIoctlI915GemExecbuffer2WR = uintptr(linux.IOWR('d', 0x69, 64))
+	drmIoctlI915GemWait = uintptr(linux.IOWR('d', 0x6c, 16))
+	drmIoctlI915GemContextCreate = uintptr(linux.IOWR('d', 0x6d, 8))
+	drmIoctlI915GemContextCreateExt = uintptr(linux.IOWR('d', 0x6d, 16))
+	drmIoctlI915GemContextDestroy = uintptr(linux.IOW('d', 0x6e, 8))
+	drmIoctlI915GemSetCaching = uintptr(linux.IOW('d', 0x6f, 8))
+	drmIoctlI915GemGetCaching = uintptr(linux.IOWR('d', 0x70, 8))
+	drmIoctlI915GetResetStats = uintptr(linux.IOWR('d', 0x72, 20))
+	drmIoctlI915GemContextGetParam = uintptr(linux.IOWR('d', 0x74, 24))
+	drmIoctlI915GemContextSetParam = uintptr(linux.IOWR('d', 0x75, 24))
+	drmIoctlI915Query = uintptr(linux.IOWR('d', 0x79, 16))
+	drmIoctlI915GemVMCreate = uintptr(linux.IOWR('d', 0x7a, 16))
+	drmIoctlI915GemVMDestroy = uintptr(linux.IOW('d', 0x7b, 16))
+	drmIoctlI915GemCreateExt = uintptr(linux.IOWR('d', 0x7c, 24))
 )
 
 // Device describes a render node assigned to a container. Path must name the
@@ -152,7 +165,15 @@ func SupportedIoctl(cmd uintptr) bool {
 		drmIoctlGemClose, drmIoctlI915GetParam, drmIoctlI915GemCreate,
 		drmIoctlI915GemBusy, drmIoctlI915GemSetDomain,
 		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling,
-		drmIoctlI915GemMmapGTT, drmIoctlI915GemMmapOffset:
+		drmIoctlI915GemMmapGTT, drmIoctlI915GemMmapOffset,
+		drmIoctlI915GemExecbuffer2, drmIoctlI915GemExecbuffer2WR,
+		drmIoctlI915GemWait, drmIoctlI915GemContextCreate,
+		drmIoctlI915GemContextCreateExt, drmIoctlI915GemContextDestroy,
+		drmIoctlI915GemSetCaching, drmIoctlI915GemGetCaching,
+		drmIoctlI915GetResetStats, drmIoctlI915GemContextGetParam,
+		drmIoctlI915GemContextSetParam, drmIoctlI915Query,
+		drmIoctlI915GemVMCreate, drmIoctlI915GemVMDestroy,
+		drmIoctlI915GemCreateExt:
 		return true
 	default:
 		return false
@@ -262,6 +283,30 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlGetParam(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemExecbuffer2, drmIoctlI915GemExecbuffer2WR:
 		return fd.ioctlExecbuffer2(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
+	case drmIoctlI915GemWait:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GemContextCreate:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+	case drmIoctlI915GemContextCreateExt:
+		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 8, true)
+	case drmIoctlI915GemContextDestroy:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+	case drmIoctlI915GemSetCaching:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+	case drmIoctlI915GemGetCaching:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+	case drmIoctlI915GetResetStats:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 20, true)
+	case drmIoctlI915GemContextGetParam, drmIoctlI915GemContextSetParam:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 24, true)
+	case drmIoctlI915Query:
+		return fd.ioctlQuery(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
+	case drmIoctlI915GemVMCreate:
+		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 0, true)
+	case drmIoctlI915GemVMDestroy:
+		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 0, false)
+	case drmIoctlI915GemCreateExt:
+		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 24, 16, true)
 	default:
 		return 0, linuxerr.ENOTTY
 	}
@@ -299,6 +344,97 @@ const (
 	i915ExecFenceArrayFlag = uint64(1 << 19)
 	i915ExecUseExtensionsFlag = uint64(1 << 21)
 )
+
+func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int, copyOut bool) (uintptr, error) {
+	if linux.IOC_SIZE(uint32(cmd)) != size || extensionOffset < 0 || extensionOffset+8 > int(size) {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint64(params[extensionOffset:extensionOffset+8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, cmd, params)
+	if err != nil {
+		return n, err
+	}
+	if copyOut {
+		if _, err := task.CopyOutBytes(addr, params); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+const (
+	maxI915QueryItems = 64
+	maxI915QueryItemBytes = 16 << 20
+	maxI915QueryTotalBytes = 64 << 20
+	i915QueryItemSize = 24
+)
+
+func (fd *renderFD) ioctlQuery(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 16 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	itemCount := binary.LittleEndian.Uint32(params[0:4])
+	itemsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[8:16]))
+	if itemCount == 0 || itemCount > maxI915QueryItems || itemsAddr == 0 {
+		return 0, linuxerr.EINVAL
+	}
+	items := make([]byte, int(itemCount)*i915QueryItemSize)
+	if _, err := task.CopyInBytes(itemsAddr, items); err != nil {
+		return 0, err
+	}
+	dataAddrs := make([]hostarch.Addr, int(itemCount))
+	dataBuffers := make([][]byte, int(itemCount))
+	totalBytes := uint32(0)
+	for i := 0; i < int(itemCount); i++ {
+		base := i * i915QueryItemSize
+		length := int32(binary.LittleEndian.Uint32(items[base+8 : base+12]))
+		ptr := hostarch.Addr(binary.LittleEndian.Uint64(items[base+16 : base+24]))
+		if length < 0 || uint32(length) > maxI915QueryItemBytes {
+			return 0, linuxerr.E2BIG
+		}
+		if uint32(length) > maxI915QueryTotalBytes-totalBytes {
+			return 0, linuxerr.E2BIG
+		}
+		totalBytes += uint32(length)
+		if length == 0 {
+			continue
+		}
+		if ptr == 0 {
+			return 0, linuxerr.EFAULT
+		}
+		dataAddrs[i] = ptr
+		dataBuffers[i] = make([]byte, int(length))
+	}
+	n, err := hostIoctlI915Query(fd.hostFD, drmIoctlI915Query, params, items, dataBuffers)
+	if err != nil {
+		return n, err
+	}
+	for i, data := range dataBuffers {
+		if len(data) == 0 {
+			continue
+		}
+		if _, err := task.CopyOutBytes(dataAddrs[i], data); err != nil {
+			return n, err
+		}
+	}
+	if _, err := task.CopyOutBytes(itemsAddr, items); err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
 
 func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32) (uintptr, error) {
 	if size != 64 {
