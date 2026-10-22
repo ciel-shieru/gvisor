@@ -144,7 +144,10 @@ func Register(vfsObj *vfs.VirtualFilesystem, devices []Device, useDevGofer bool)
 // ioctl. It does not imply support for GEM, submission, mmap, or media ioctls.
 func SupportedIoctl(cmd uintptr) bool {
 	switch cmd {
-	case drmIoctlVersion, drmIoctlGetMagic, drmIoctlGetCap, drmIoctlSetClientCap:
+	case drmIoctlVersion, drmIoctlGetMagic, drmIoctlGetCap, drmIoctlSetClientCap,
+		drmIoctlGemClose, drmIoctlI915GetParam, drmIoctlI915GemCreate,
+		drmIoctlI915GemBusy, drmIoctlI915GemSetDomain,
+		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
 		return true
 	default:
 		return false
@@ -233,6 +236,18 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), drmSetClientCapSize, false)
 	case drmIoctlGetMagic:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), drmMagicSize, true)
+	case drmIoctlGemClose:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+	case drmIoctlI915GemCreate:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GemBusy:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+	case drmIoctlI915GemSetDomain:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 12, false)
+	case drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GetParam:
+		return fd.ioctlGetParam(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	default:
 		return 0, linuxerr.ENOTTY
 	}
@@ -256,6 +271,32 @@ func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Add
 		if _, err := task.CopyOutBytes(addr, data); err != nil {
 			return n, err
 		}
+	}
+	return n, nil
+}
+
+func (fd *renderFD) ioctlGetParam(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 16 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	valuePtr := hostarch.Addr(binary.LittleEndian.Uint64(params[8:16]))
+	if valuePtr == 0 {
+		return 0, linuxerr.EFAULT
+	}
+	value := make([]byte, 4)
+	n, err := hostIoctlI915GetParam(fd.hostFD, drmIoctlI915GetParam, params, value)
+	if err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(valuePtr, value); err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
 	}
 	return n, nil
 }
