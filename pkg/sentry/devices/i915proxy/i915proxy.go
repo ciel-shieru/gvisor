@@ -638,8 +638,22 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 	return n, nil
 }
 
+const (
+	i915GemCreateExtFlagNeedsCPUAccess = uint32(1 << 0)
+	i915GemCreateExtMemoryRegions = uint32(0)
+	i915MemoryClassSystem = uint16(0)
+	i915MemorySystemInstance = uint16(0)
+	i915GemCreateExtSize = 24
+	i915GemCreateExtMemoryRegionsSize = 32
+	i915GemMemoryClassInstanceSize = 8
+)
+
+// ioctlGemCreate handles GEM_CREATE and a restricted GEM_CREATE_EXT subset.
+// The only accepted extension is a single system-memory region request. This
+// is sufficient for the integrated-GPU ABI and deliberately rejects local
+// device memory, extension chaining, and unknown extension names.
 func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int) (uintptr, error) {
-	if linux.IOC_SIZE(uint32(cmd)) != size || (size != 16 && size != 24) {
+	if linux.IOC_SIZE(uint32(cmd)) != size || (size != 16 && size != i915GemCreateExtSize) {
 		return 0, linuxerr.EINVAL
 	}
 	params := make([]byte, size)
@@ -650,13 +664,46 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	if requestedSize == 0 || requestedSize > math.MaxInt64 {
 		return 0, linuxerr.EINVAL
 	}
-	// The GEM_CREATE pad and GEM_CREATE_EXT flags are restricted to zero.
-	if binary.LittleEndian.Uint32(params[12:16]) != 0 {
+	if binary.LittleEndian.Uint32(params[8:12]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
-	if extensionOffset != 0 {
-		if extensionOffset+8 > int(size) || binary.LittleEndian.Uint64(params[extensionOffset:extensionOffset+8]) != 0 {
+
+	var extension, regions []byte
+	if size == 16 {
+		if binary.LittleEndian.Uint32(params[12:16]) != 0 {
 			return 0, linuxerr.EINVAL
+		}
+	} else {
+		flags := binary.LittleEndian.Uint32(params[12:16])
+		if flags &^ i915GemCreateExtFlagNeedsCPUAccess != 0 || extensionOffset != 16 {
+			return 0, linuxerr.EINVAL
+		}
+		extensionAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[16:24]))
+		if extensionAddr != 0 {
+			extension = make([]byte, i915GemCreateExtMemoryRegionsSize)
+			if _, err := task.CopyInBytes(extensionAddr, extension); err != nil {
+				return 0, err
+			}
+			if binary.LittleEndian.Uint64(extension[0:8]) != 0 ||
+				binary.LittleEndian.Uint32(extension[8:12]) != i915GemCreateExtMemoryRegions ||
+				binary.LittleEndian.Uint32(extension[12:16]) != 0 ||
+				binary.LittleEndian.Uint32(extension[16:20]) != 0 ||
+				binary.LittleEndian.Uint32(extension[20:24]) != 1 {
+				return 0, linuxerr.EINVAL
+			}
+			regionsAddr := hostarch.Addr(binary.LittleEndian.Uint64(extension[24:32]))
+			if regionsAddr == 0 {
+				return 0, linuxerr.EFAULT
+			}
+			regions = make([]byte, i915GemMemoryClassInstanceSize)
+			if _, err := task.CopyInBytes(regionsAddr, regions); err != nil {
+				return 0, err
+			}
+			if binary.LittleEndian.Uint16(regions[0:2]) != i915MemoryClassSystem ||
+				binary.LittleEndian.Uint16(regions[2:4]) != i915MemorySystemInstance ||
+				binary.LittleEndian.Uint32(regions[4:8]) != 0 {
+				return 0, linuxerr.EINVAL
+			}
 		}
 	}
 
@@ -665,7 +712,13 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	if len(fd.gemObjects) >= maxTrackedGEMObjects {
 		return 0, linuxerr.ENOMEM
 	}
-	n, err := hostIoctl(fd.hostFD, cmd, params)
+	var n uintptr
+	var err error
+	if len(extension) != 0 {
+		n, err = hostIoctlI915GemCreateExt(fd.hostFD, cmd, params, extension, regions)
+	} else {
+		n, err = hostIoctl(fd.hostFD, cmd, params)
+	}
 	if err != nil {
 		return n, err
 	}
