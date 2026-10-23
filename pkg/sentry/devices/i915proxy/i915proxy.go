@@ -294,7 +294,7 @@ type renderFD struct {
 	vfs.NoLockFD
 
 	dev *renderDevice
-	hostFD int32
+	hostFD int32 `state:"nosave"`
 	memmapFile renderMemmapFile
 
 	// gemMu protects gemObjects.
