@@ -153,12 +153,12 @@ func hostIoctlI915GemCreateExt(fd int32, cmd uintptr, params, extension, regions
 	var originalExtensionPtr [8]byte
 	var originalRegionsPtr [8]byte
 	copy(originalExtensionPtr[:], params[16:24])
-	copy(originalRegionsPtr[:], extension[24:32])
+	copy(originalRegionsPtr[:], extension[40:48])
 	binary.LittleEndian.PutUint64(params[16:24], uint64(uintptr(unsafe.Pointer(&extension[0]))))
-	binary.LittleEndian.PutUint64(extension[24:32], uint64(uintptr(unsafe.Pointer(&regions[0]))))
+	binary.LittleEndian.PutUint64(extension[40:48], uint64(uintptr(unsafe.Pointer(&regions[0]))))
 	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
 	copy(params[16:24], originalExtensionPtr[:])
-	copy(extension[24:32], originalRegionsPtr[:])
+	copy(extension[40:48], originalRegionsPtr[:])
 	runtime.KeepAlive(params)
 	runtime.KeepAlive(extension)
 	runtime.KeepAlive(regions)
