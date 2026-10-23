@@ -34,6 +34,12 @@ const maxTrackedMmapOffsets = maxTrackedGEMObjects * 4
 
 // ConfigureMMap implements vfs.FileDescriptionImpl.ConfigureMMap.
 func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) error {
+	fd.gemMu.Lock()
+	unusable := fd.unusable
+	fd.gemMu.Unlock()
+	if unusable {
+		return linuxerr.EIO
+	}
 	if opts.Offset > math.MaxInt64 || opts.Length > math.MaxInt64-opts.Offset {
 		return linuxerr.EOVERFLOW
 	}
