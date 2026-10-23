@@ -91,7 +91,7 @@ func hostIoctlI915Query(fd int32, cmd uintptr, params, items []byte, buffers [][
 		return 0, unix.EINVAL
 	}
 	var originalItemsPtr [8]byte
-	copy(originalItemsPtr[:], params[8:16])
+	copy(originalItemsPtr[:], params[0:8])
 	originalDataPtrs := make([][8]byte, len(buffers))
 	for i, buf := range buffers {
 		off := i*i915QueryItemSize + 16
@@ -102,9 +102,9 @@ func hostIoctlI915Query(fd int32, cmd uintptr, params, items []byte, buffers [][
 		}
 		binary.LittleEndian.PutUint64(items[off:off+8], uint64(uintptr(unsafe.Pointer(&buf[0]))))
 	}
-	binary.LittleEndian.PutUint64(params[8:16], uint64(uintptr(unsafe.Pointer(&items[0]))))
+	binary.LittleEndian.PutUint64(params[0:8], uint64(uintptr(unsafe.Pointer(&items[0]))))
 	defer func() {
-		copy(params[8:16], originalItemsPtr[:])
+		copy(params[0:8], originalItemsPtr[:])
 		for i := range originalDataPtrs {
 			off := i*i915QueryItemSize + 16
 			copy(items[off:off+8], originalDataPtrs[i][:])
