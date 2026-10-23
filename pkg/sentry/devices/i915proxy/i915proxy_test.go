@@ -72,6 +72,27 @@ func TestI915GemCreateCommandNumber(t *testing.T) {
 	}
 }
 
+func TestIoctlABIEncodings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{name: "GEM_CREATE", got: drmIoctlI915GemCreate, want: 0xc010645b},
+		{name: "GEM_MMAP_GTT", got: drmIoctlI915GemMmapGTT, want: 0xc0106464},
+		{name: "GEM_MMAP_OFFSET", got: drmIoctlI915GemMmapOffset, want: 0xc0206464},
+		{name: "GEM_EXECBUFFER2", got: drmIoctlI915GemExecbuffer2, want: 0x40406469},
+		{name: "GEM_EXECBUFFER2_WR", got: drmIoctlI915GemExecbuffer2WR, want: 0xc0406469},
+		{name: "QUERY", got: drmIoctlI915Query, want: 0xc0106479},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Fatalf("ioctl encoding = %#x, want %#x", tc.got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSupportedIoctl(t *testing.T) {
 	for _, cmd := range []uintptr{
 		drmIoctlVersion,
