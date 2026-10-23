@@ -11,6 +11,7 @@ go_library(
         "ioctl_unsafe.go",
         "mmap.go",
         "mmap_unsafe.go",
+        "prime.go",
         "seccomp_filters.go",
     ],
     visibility = [
