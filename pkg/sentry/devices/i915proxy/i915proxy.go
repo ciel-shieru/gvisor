@@ -410,6 +410,36 @@ func (fd *renderFD) gemObjectSize(handle uint32) (uint64, bool) {
 	return size, ok
 }
 
+func (fd *renderFD) forgetGEMObject(handle uint32) {
+	fd.gemMu.Lock()
+	delete(fd.gemObjects, handle)
+	fd.gemMu.Unlock()
+	fd.memmapFile.forgetOffsets(handle)
+}
+
+func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 8 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	handle := binary.LittleEndian.Uint32(params[0:4])
+	if _, ok := fd.gemObjectSize(handle); !ok {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlGemClose, params)
+	if err != nil {
+		return n, err
+	}
+	fd.forgetGEMObject(handle)
+	return n, nil
+}
+
 func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int) (uintptr, error) {
 	if linux.IOC_SIZE(uint32(cmd)) != size || (size != 16 && size != 24) {
 		return 0, linuxerr.EINVAL
