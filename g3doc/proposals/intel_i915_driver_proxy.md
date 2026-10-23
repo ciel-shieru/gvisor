@@ -1,6 +1,12 @@
 # Intel i915 GPU Driver Proxy
 
-Status: Draft proposal. No runtime support is implemented by this document.
+Status: Experimental partial implementation. Not production-ready.
+
+The branch contains an initial Sentry render-node proxy and runtime opt-in, but
+it does not yet provide complete graphics or Quick Sync Video compatibility.
+PRs and release notes must not describe i915, VA-API, oneVPL, Jellyfin, Plex, or
+Emby hardware acceleration as supported until the remaining implementation,
+build, security, and real-hardware validation work below is complete.
 
 ## Synopsis
 
@@ -235,6 +241,40 @@ Qualify systrap, ptrace, and KVM independently. If the required mapping or
 synchronization semantics cannot be implemented safely on a platform, fail
 closed on that platform rather than silently exposing reduced protection.
 Do not advertise KVM support until the real-hardware integration tests pass.
+
+## Current implementation status
+
+The current branch implements a restricted render-node proxy with a runtime
+`--i915proxy` opt-in. It validates the allocated DRM major/minor and confirms
+that the host render node reports the `i915` driver. The host ioctl policy
+allows an explicit command set, and the implemented handlers translate
+Sentry/application pointers for DRM version queries, i915 getparam, i915 query,
+and execbuffer2. GEM handles are tracked per open file description, and
+render-node mmap offsets are checked against tracked GEM objects and object
+sizes.
+
+The implementation also rejects checkpoint/restore while an i915 device file
+is open, and marks mappings as unsavable. This avoids restoring a stale host
+device FD or an old GPU execution context.
+
+The current implementation is incomplete. It does not yet provide:
+
+- DRM PRIME / dma-buf handle-to-FD and FD-to-handle translation.
+- DRM syncobj support, explicit sync-file fences, or execbuffer fence arrays.
+- Full i915 ioctl coverage required by all Mesa OpenGL/Vulkan and media-driver
+  versions, including all pointer-bearing structures and extensions.
+- Full context, VM, GEM, reset, and memory-management ABI tracking.
+- A confirmed correct host seccomp policy on every supported Sentry platform.
+- Native-versus-gVisor ABI/syscall tests, fuzz coverage, Bazel builds, lint, or
+  benchmarks for the new package.
+- Real-hardware verification of OpenGL/Vulkan rendering, VA-API or oneVPL
+  decode/encode, video processing, codec profiles, FFmpeg transcoding, or
+  Jellyfin/Plex/Emby workflows.
+
+This status is intentional and fail-closed. Unsupported ioctl variants return
+an error instead of falling back to unrestricted character-device passthrough.
+Do not enable the proxy for untrusted production workloads until all required
+handlers have been reviewed and the validation matrix passes.
 
 ## Validation plan
 
