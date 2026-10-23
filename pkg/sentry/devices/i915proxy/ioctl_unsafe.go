@@ -143,6 +143,31 @@ func hostIoctlI915GemTransfer(fd int32, cmd uintptr, params, data []byte) (uintp
 	return n, nil
 }
 
+// hostIoctlI915GemCreateExt translates the pointer graph accepted by the
+// restricted GEM_CREATE_EXT_MEMORY_REGIONS path. The caller has validated that
+// the extension is a single system-memory region with no extension successor.
+func hostIoctlI915GemCreateExt(fd int32, cmd uintptr, params, extension, regions []byte) (uintptr, error) {
+	if len(params) != i915GemCreateExtSize || len(extension) != i915GemCreateExtMemoryRegionsSize || len(regions) != i915GemMemoryClassInstanceSize {
+		return 0, unix.EINVAL
+	}
+	var originalExtensionPtr [8]byte
+	var originalRegionsPtr [8]byte
+	copy(originalExtensionPtr[:], params[16:24])
+	copy(originalRegionsPtr[:], extension[24:32])
+	binary.LittleEndian.PutUint64(params[16:24], uint64(uintptr(unsafe.Pointer(&extension[0]))))
+	binary.LittleEndian.PutUint64(extension[24:32], uint64(uintptr(unsafe.Pointer(&regions[0]))))
+	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	copy(params[16:24], originalExtensionPtr[:])
+	copy(extension[24:32], originalRegionsPtr[:])
+	runtime.KeepAlive(params)
+	runtime.KeepAlive(extension)
+	runtime.KeepAlive(regions)
+	if errno != 0 {
+		return n, errno
+	}
+	return n, nil
+}
+
 // hostIoctlI915GetParam translates drm_i915_getparam.value to a Sentry-owned
 // integer buffer. The pointer in the ioctl structure never refers to application
 // memory while the host kernel is handling the request.
