@@ -485,6 +485,13 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	}
 	fd.gemObjects[handle] = actualSize
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		closeParams := make([]byte, 8)
+		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
+		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
+		delete(fd.gemObjects, handle)
+		if closeErr != nil {
+			return n, fmt.Errorf("copying GEM create result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
+		}
 		return n, err
 	}
 	return n, nil
