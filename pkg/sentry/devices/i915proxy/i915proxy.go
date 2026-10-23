@@ -1052,7 +1052,10 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		flags&(i915ExecUseExtensionsFlag|i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag|i915ExecFenceArrayFlag) != 0 {
 		return 0, linuxerr.EINVAL
 	}
-	if flags&0x3f > 4 || flags&(3<<6) == 3<<6 || flags&(3<<13) == 3<<13 {
+	ring := flags & 0x3f
+	constantsMode := flags & (3 << 6)
+	bsdRing := flags & (3 << 13)
+	if ring > 4 || constantsMode == 3<<6 || bsdRing == 3<<13 {
 		return 0, linuxerr.EINVAL
 	}
 	// Deprecated DRI1 fields must be zero. Cliprect, extension, and fence
