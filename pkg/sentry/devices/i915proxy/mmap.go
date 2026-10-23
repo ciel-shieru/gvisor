@@ -25,6 +25,7 @@ import (
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/sentry/fsutil"
+	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 )
@@ -33,6 +34,9 @@ import (
 func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) error {
 	if opts.Offset > math.MaxInt64 || opts.Length > math.MaxInt64-opts.Offset {
 		return linuxerr.EOVERFLOW
+	}
+	if opts.Length > uint64(maxInternalMapPages)*uint64(hostarch.PageSize) {
+		return linuxerr.E2BIG
 	}
 	if _, err := fd.memmapFile.memoryTypeForRange(opts.Offset, opts.Length); err != nil {
 		return err
@@ -256,4 +260,12 @@ func (mf *renderMappedFile) DataFD(fr memmap.FileRange) (int, error) {
 // FD implements memmap.File.FD.
 func (mf *renderMappedFile) FD() int {
 	return mf.file.FD()
+}
+
+// MapInternal implements memmap.File.MapInternal.
+func (mf *renderMappedFile) MapInternal(fr memmap.FileRange, at hostarch.AccessType) (safemem.BlockSeq, error) {
+	if _, err := mf.file.memoryTypeForRange(fr.Start, fr.Length()); err != nil {
+		return safemem.BlockSeq{}, err
+	}
+	return mf.file.MapInternal(fr, at)
 }
