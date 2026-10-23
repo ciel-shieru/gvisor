@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
@@ -147,6 +148,7 @@ func Register(vfsObj *vfs.VirtualFilesystem, devices []Device, useDevGofer bool)
 			relpath: strings.TrimPrefix(dev.Path, "/dev/"),
 			minor: dev.Minor,
 			useDevGofer: useDevGofer,
+			openFDs: make(map[*renderFD]struct{}),
 		}
 		if err := vfsObj.RegisterDevice(vfs.CharDevice, dev.Major, dev.Minor, renderDev, &vfs.RegisterDeviceOptions{
 			GroupName: "drm",
@@ -187,6 +189,51 @@ type renderDevice struct {
 	relpath string
 	minor uint32
 	useDevGofer bool
+
+	mu sync.Mutex `state:"nosave"`
+	openFDs map[*renderFD]struct{}
+}
+
+func (dev *renderDevice) addFD(fd *renderFD) {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	dev.openFDs[fd] = struct{}{}
+}
+
+func (dev *renderDevice) removeFD(fd *renderFD) {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	delete(dev.openFDs, fd)
+}
+
+func (dev *renderDevice) hasOpenFDs() bool {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	return len(dev.openFDs) != 0
+}
+
+// AnyDevicesOpen reports whether an assigned i915 render node has an open file
+// description. Live i915 state cannot be checkpointed or restored safely.
+func AnyDevicesOpen(vfsObj *vfs.VirtualFilesystem) bool {
+	type deviceID struct {
+		kind vfs.DeviceKind
+		major uint32
+		minor uint32
+	}
+	var ids []deviceID
+	_ = vfsObj.ForEachDevice(func(_ string, kind vfs.DeviceKind, major, minor uint32, _ uint16) error {
+		if kind == vfs.CharDevice && major == DRMDeviceMajor {
+			ids = append(ids, deviceID{kind: kind, major: major, minor: minor})
+		}
+		return nil
+	})
+	for _, id := range ids {
+		dev, ok := vfsObj.GetRegisteredDevice(id.kind, id.major, id.minor).(*renderDevice)
+		if ok && dev.hasOpenFDs() {
+			return true
+		}
+	}
+	return false
 }
 
 // Open implements vfs.Device.Open.
@@ -215,7 +262,7 @@ func (dev *renderDevice) Open(ctx context.Context, mnt *vfs.Mount, d *vfs.Dentry
 		return nil, fmt.Errorf("i915proxy: rejecting %s: %w", dev.relpath, err)
 	}
 
-	fd := &renderFD{hostFD: hostFD}
+	fd := &renderFD{dev: dev, hostFD: hostFD}
 	if err := fd.vfsfd.Init(fd, opts.Flags, auth.CredentialsFromContext(ctx), mnt, d, &vfs.FileDescriptionOptions{
 		UseDentryMetadata: true,
 		SpecialFile: true,
@@ -224,6 +271,7 @@ func (dev *renderDevice) Open(ctx context.Context, mnt *vfs.Mount, d *vfs.Dentry
 	}
 	fd.memmapFile.SetFD(int(hostFD))
 	fd.memmapFile.MmapFileRefs.Closer = &fd.memmapFile
+	dev.addFD(fd)
 	closeHostFD = false
 	return &fd.vfsfd, nil
 }
@@ -237,12 +285,14 @@ type renderFD struct {
 	vfs.DentryMetadataFileDescriptionImpl
 	vfs.NoLockFD
 
+	dev *renderDevice
 	hostFD int32
 	memmapFile renderMemmapFile
 }
 
 // Release implements vfs.FileDescriptionImpl.Release.
 func (fd *renderFD) Release(context.Context) {
+	fd.dev.removeFD(fd)
 	fd.memmapFile.MappableRelease()
 }
 
