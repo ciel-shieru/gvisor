@@ -322,7 +322,7 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlGetMagic:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), drmMagicSize, true)
 	case drmIoctlGemClose:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+		return fd.ioctlGemClose(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemCreate:
 		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 16, 0)
 	case drmIoctlI915GemBusy:
