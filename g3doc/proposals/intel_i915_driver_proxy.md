@@ -259,7 +259,10 @@ device FD or an old GPU execution context.
 
 The current implementation is incomplete. It does not yet provide:
 
-- DRM PRIME / dma-buf handle-to-FD and FD-to-handle translation.
+- Complete DRM PRIME / dma-buf support. Handle-to-FD and FD-to-handle translation
+  is restricted to dma-buf FDs created by this proxy for the same render node;
+  other dma-buf providers and general dma-buf read/write/mmap behavior are not
+  implemented.
 - DRM syncobj support, explicit sync-file fences, or execbuffer fence arrays.
 - Full i915 ioctl coverage required by all Mesa OpenGL/Vulkan and media-driver
   versions, including all pointer-bearing structures and extensions.
