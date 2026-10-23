@@ -171,9 +171,6 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 
 	fd.gemMu.Lock()
 	defer fd.gemMu.Unlock()
-	if len(fd.gemObjects) >= maxTrackedGEMObjects {
-		return 0, linuxerr.ENOMEM
-	}
 	binary.LittleEndian.PutUint32(params[8:12], uint32(dmabuf.hostFD))
 	n, err := hostIoctl(fd.hostFD, drmIoctlPrimeFDToHandle, params)
 	if err != nil {
