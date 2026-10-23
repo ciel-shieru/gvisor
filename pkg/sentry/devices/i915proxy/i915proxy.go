@@ -199,6 +199,9 @@ type renderDevice struct {
 func (dev *renderDevice) addFD(fd *renderFD) {
 	dev.mu.Lock()
 	defer dev.mu.Unlock()
+	if dev.openFDs == nil {
+		dev.openFDs = make(map[*renderFD]struct{})
+	}
 	dev.openFDs[fd] = struct{}{}
 }
 
