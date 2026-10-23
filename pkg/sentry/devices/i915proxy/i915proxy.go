@@ -630,7 +630,8 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 	}
 	handle := binary.LittleEndian.Uint32(params[0:4])
 	fd.gemMu.Lock()
-	if _, ok := fd.gemObjects[handle]; !ok {
+	objectSize, ok := fd.gemObjects[handle]
+	if !ok {
 		fd.gemMu.Unlock()
 		return 0, linuxerr.EINVAL
 	}
@@ -640,6 +641,7 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 		return n, err
 	}
 	delete(fd.gemObjects, handle)
+	fd.gemBytes -= objectSize
 	fd.memmapFile.forgetOffsets(handle)
 	fd.gemMu.Unlock()
 	return n, nil
@@ -667,7 +669,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		return 0, err
 	}
 	requestedSize := binary.LittleEndian.Uint64(params[0:8])
-	if requestedSize == 0 || requestedSize > math.MaxInt64 {
+	if requestedSize == 0 || requestedSize > maxGEMObjectSize {
 		return 0, linuxerr.EINVAL
 	}
 	if binary.LittleEndian.Uint32(params[8:12]) != 0 {
@@ -718,7 +720,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 
 	fd.gemMu.Lock()
 	defer fd.gemMu.Unlock()
-	if len(fd.gemObjects) >= maxTrackedGEMObjects {
+	if len(fd.gemObjects) >= maxTrackedGEMObjects || requestedSize > maxGEMBytesPerFD-fd.gemBytes {
 		return 0, linuxerr.ENOMEM
 	}
 	var n uintptr
@@ -739,7 +741,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	if _, exists := fd.gemObjects[handle]; exists {
 		return n, linuxerr.EIO
 	}
-	if actualSize == 0 || actualSize > math.MaxInt64 {
+	if actualSize == 0 || actualSize > maxGEMObjectSize || actualSize > maxGEMBytesPerFD-fd.gemBytes {
 		closeParams := make([]byte, 8)
 		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
@@ -752,6 +754,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		fd.gemObjects = make(map[uint32]uint64)
 	}
 	fd.gemObjects[handle] = actualSize
+	fd.gemBytes += actualSize
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
 		closeParams := make([]byte, 8)
 		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
@@ -760,6 +763,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 			return n, fmt.Errorf("copying GEM create result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
 		}
 		delete(fd.gemObjects, handle)
+		fd.gemBytes -= actualSize
 		return n, err
 	}
 	return n, nil
