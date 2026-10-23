@@ -122,6 +122,9 @@ func ValidateDevice(dev Device) error {
 	if err != nil {
 		return fmt.Errorf("i915proxy: invalid render-node number in %q: %w", dev.Path, err)
 	}
+	if strconv.FormatUint(nodeMinor, 10) != suffix {
+		return fmt.Errorf("i915proxy: non-canonical render-node number in %q", dev.Path)
+	}
 	if nodeMinor != uint64(dev.Minor) || dev.Minor < renderMinorBase || dev.Minor >= renderMinorLimit {
 		return fmt.Errorf("i915proxy: device %q has minor %d; expected matching render minor in [%d, %d)", dev.Path, dev.Minor, renderMinorBase, renderMinorLimit)
 	}
