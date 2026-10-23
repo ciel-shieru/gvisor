@@ -176,7 +176,7 @@ func SupportedIoctl(cmd uintptr) bool {
 		drmIoctlI915GetResetStats, drmIoctlI915GemContextGetParam,
 		drmIoctlI915GemContextSetParam, drmIoctlI915Query,
 		drmIoctlI915GemVMCreate, drmIoctlI915GemVMDestroy,
-		drmIoctlI915GemCreateExt:
+		drmIoctlI915GemCreateExt, drmIoctlPrimeHandleToFD, drmIoctlPrimeFDToHandle:
 		return true
 	default:
 		return false
