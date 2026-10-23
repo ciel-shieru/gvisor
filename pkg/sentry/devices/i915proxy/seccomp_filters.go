@@ -52,6 +52,8 @@ func Filters() seccomp.SyscallRules {
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemVMCreate)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemVMDestroy)},
 			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlI915GemCreateExt)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlPrimeHandleToFD)},
+			seccomp.PerArg{seccomp.NonNegativeFD{}, seccomp.EqualTo(drmIoctlPrimeFDToHandle)},
 		}),
 		unix.SYS_MMAP: seccomp.PerArg{
 			seccomp.AnyValue{},
