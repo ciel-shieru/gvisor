@@ -591,6 +591,8 @@ const (
 	i915ExecFenceInFlag = uint64(1 << 16)
 	i915ExecFenceOutFlag = uint64(1 << 17)
 	i915ExecFenceSubmitFlag = uint64(1 << 20)
+	i915ExecNoRelocFlag = uint64(1 << 11)
+	i915ExecHandleLUTFlag = uint64(1 << 12)
 	// Bits outside this mask are not passed to the host driver.
 	i915ExecFlagMask = uint64(0x3f | (3 << 6) | (1 << 8) | (1 << 10) | (1 << 11) | (1 << 12) | (3 << 13) | (1 << 15) | (1 << 18))
 )
@@ -879,7 +881,7 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		ptr := hostarch.Addr(binary.LittleEndian.Uint64(objects[base+8 : base+16]))
 		alignment := binary.LittleEndian.Uint64(objects[base+16 : base+24])
 		objectFlags := binary.LittleEndian.Uint64(objects[base+32 : base+40])
-		if handle == 0 || objectFlags&^uint64(0xff) != 0 ||
+		if handle == 0 || objectFlags&^uint64(0xdf) != 0 ||
 			binary.LittleEndian.Uint64(objects[base+40:base+48]) != 0 ||
 			binary.LittleEndian.Uint64(objects[base+48:base+56]) != 0 {
 			return 0, linuxerr.EINVAL
@@ -906,6 +908,9 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 			return 0, err
 		}
 	}
+	if flags&i915ExecNoRelocFlag != 0 && totalRelocations != 0 {
+		return 0, linuxerr.EINVAL
+	}
 
 	// The GEM handle table and host file description must remain consistent
 	// for the full duration of submission.
@@ -918,7 +923,12 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		}
 		for offset := 0; offset < len(relocations[i]); offset += i915RelocationEntrySize {
 			targetHandle := binary.LittleEndian.Uint32(relocations[i][offset : offset+4])
-			if _, ok := fd.gemObjects[targetHandle]; !ok {
+			if flags&i915ExecHandleLUTFlag != 0 {
+				if targetHandle >= objectCount {
+					fd.gemMu.Unlock()
+					return 0, linuxerr.EINVAL
+				}
+			} else if _, ok := fd.gemObjects[targetHandle]; !ok {
 				fd.gemMu.Unlock()
 				return 0, linuxerr.EINVAL
 			}
