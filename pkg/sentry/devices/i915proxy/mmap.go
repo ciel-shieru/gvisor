@@ -24,11 +24,13 @@ import (
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/hostarch"
-	"gvisor.dev/gvisor/pkg/sentry/fsutil"
 	"gvisor.dev/gvisor/pkg/safemem"
+	"gvisor.dev/gvisor/pkg/sentry/fsutil"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 )
+
+const maxTrackedMmapOffsets = maxTrackedGEMObjects * 4
 
 // ConfigureMMap implements vfs.FileDescriptionImpl.ConfigureMMap.
 func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) error {
@@ -255,8 +257,6 @@ func (m renderMappable) InvalidateUnsavable(context.Context) error {
 // host file's reference-counted mapping lifecycle.
 //
 // +stateify savable
-const maxTrackedMmapOffsets = maxTrackedGEMObjects * 4
-
 type renderMappedFile struct {
 	memmap.NoBufferedIOFallback
 	file *renderMemmapFile
