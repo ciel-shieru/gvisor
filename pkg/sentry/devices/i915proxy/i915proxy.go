@@ -278,7 +278,6 @@ func (dev *renderDevice) Open(ctx context.Context, mnt *vfs.Mount, d *vfs.Dentry
 		return nil, err
 	}
 	fd.memmapFile.SetFD(int(hostFD))
-	fd.memmapFile.MmapFileRefs.Closer = &fd.memmapFile
 	dev.addFD(fd)
 	closeHostFD = false
 	return &fd.vfsfd, nil
@@ -306,6 +305,7 @@ type renderFD struct {
 // Release implements vfs.FileDescriptionImpl.Release.
 func (fd *renderFD) Release(context.Context) {
 	fd.dev.removeFD(fd)
+	fd.memmapFile.MmapFileRefs.Closer = &fd.memmapFile
 	fd.memmapFile.MappableRelease()
 }
 
