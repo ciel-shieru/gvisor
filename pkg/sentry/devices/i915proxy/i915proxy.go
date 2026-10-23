@@ -705,7 +705,7 @@ func (fd *renderFD) ioctlGemMmapGTT(task *kernel.Task, addr hostarch.Addr, size 
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine, objectSize); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine, objectSize, binary.LittleEndian.Uint32(params[0:4])); err != nil {
 		return n, err
 	}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
@@ -754,7 +754,7 @@ func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, si
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, memoryType, objectSize); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, memoryType, objectSize, binary.LittleEndian.Uint32(params[0:4])); err != nil {
 		return n, err
 	}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
