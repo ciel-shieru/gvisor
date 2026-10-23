@@ -328,6 +328,8 @@ type renderFD struct {
 	// +checklocks:gemMu
 	gemObjects map[uint32]uint64 `state:"nosave"`
 	// +checklocks:gemMu
+	gemBytes uint64 `state:"nosave"`
+	// +checklocks:gemMu
 	contexts map[uint32]struct{} `state:"nosave"`
 	// +checklocks:gemMu
 	vms map[uint32]struct{} `state:"nosave"`
@@ -608,6 +610,11 @@ const (
 	maxTrackedGEMObjects = 1 << 16
 	maxTrackedContexts = 1 << 16
 	maxTrackedVMs = 1 << 16
+
+	// Bound sparse GEM object metadata and per-file-description virtual size
+	// so a sandbox cannot reserve unbounded host shmem backing through ioctls.
+	maxGEMObjectSize = uint64(16 << 30)
+	maxGEMBytesPerFD = uint64(64 << 30)
 )
 
 func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
