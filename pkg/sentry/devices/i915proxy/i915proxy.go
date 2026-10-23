@@ -83,7 +83,7 @@ const (
 	drmIoctlI915GemContextDestroy = uintptr(linux.IOW('d', 0x6e, 8))
 	drmIoctlI915GemSetCaching = uintptr(linux.IOW('d', 0x6f, 8))
 	drmIoctlI915GemGetCaching = uintptr(linux.IOWR('d', 0x70, 8))
-	drmIoctlI915GetResetStats = uintptr(linux.IOWR('d', 0x72, 20))
+	drmIoctlI915GetResetStats = uintptr(linux.IOWR('d', 0x72, 24))
 	drmIoctlI915GemContextGetParam = uintptr(linux.IOWR('d', 0x74, 24))
 	drmIoctlI915GemContextSetParam = uintptr(linux.IOWR('d', 0x75, 24))
 	drmIoctlI915Query = uintptr(linux.IOWR('d', 0x79, 16))
@@ -396,9 +396,9 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemGetCaching:
 		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 8, true)
 	case drmIoctlI915GetResetStats:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 20, true)
+		return fd.ioctlResetStats(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemContextGetParam, drmIoctlI915GemContextSetParam:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 24, true)
+		return fd.ioctlContextParam(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915Query:
 		return fd.ioctlQuery(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemVMCreate:
@@ -737,6 +737,87 @@ func (fd *renderFD) ioctlContextDestroy(task *kernel.Task, addr hostarch.Addr, s
 	return hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, params)
 }
 
+const (
+	i915ContextParamBanPeriod = 1
+	i915ContextParamGTTSize = 3
+	i915ContextParamNoErrorCapture = 4
+	i915ContextParamBannable = 5
+	i915ContextParamPriority = 6
+	i915ContextParamSSEU = 7
+	i915ContextParamRecoverable = 8
+	i915ContextParamVM = 9
+	i915ContextParamEngines = 10
+	i915ContextParamPersistence = 11
+	i915ContextParamProtectedContent = 13
+	i915ContextParamLowLatency = 14
+	i915ContextParamContextImage = 15
+)
+
+// ioctlContextParam only forwards scalar-valued context parameters. i915
+// defines pointer-valued parameters (SSEU, ENGINES, CONTEXT_IMAGE); those need
+// dedicated nested-pointer translators and are rejected here.
+func (fd *renderFD) ioctlContextParam(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 24 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	ctxID := binary.LittleEndian.Uint32(params[0:4])
+	valueSize := binary.LittleEndian.Uint32(params[4:8])
+	param := binary.LittleEndian.Uint64(params[8:16])
+	switch param {
+	case i915ContextParamBanPeriod, i915ContextParamGTTSize,
+		i915ContextParamNoErrorCapture, i915ContextParamBannable,
+		i915ContextParamPriority, i915ContextParamRecoverable,
+		i915ContextParamVM, i915ContextParamPersistence,
+		i915ContextParamProtectedContent, i915ContextParamLowLatency:
+	default:
+		return 0, linuxerr.EINVAL
+	}
+	if valueSize != 0 && valueSize != 8 {
+		return 0, linuxerr.EINVAL
+	}
+	if ctxID == 0 && param != i915ContextParamGTTSize {
+		// The default context cannot meaningfully own explicit per-context
+		// scheduling or VM settings. Let the host handle the supported size
+		// query for GTT_SIZE only.
+		return 0, linuxerr.EINVAL
+	}
+	returned, err := hostIoctl(fd.hostFD, cmd, params)
+	if err != nil {
+		return returned, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return returned, err
+	}
+	return returned, nil
+}
+
+// ioctlResetStats validates reserved fields before forwarding the fixed-size
+// reset stats structure.
+func (fd *renderFD) ioctlResetStats(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 24 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 || binary.LittleEndian.Uint32(params[20:24]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlI915GetResetStats, params)
+	if err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch.Addr, create bool) (uintptr, error) {
 	if linux.IOC_SIZE(uint32(cmd)) != 16 {
 		return 0, linuxerr.EINVAL
@@ -745,10 +826,10 @@ func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	vmID := binary.LittleEndian.Uint32(params[0:4])
-	flags := binary.LittleEndian.Uint32(params[4:8])
-	extensions := binary.LittleEndian.Uint64(params[8:16])
-	if flags != 0 || extensions != 0 || (create && vmID != 0) || (!create && vmID == 0) {
+	extensions := binary.LittleEndian.Uint64(params[0:8])
+	flags := binary.LittleEndian.Uint32(params[8:12])
+	vmID := binary.LittleEndian.Uint32(params[12:16])
+	if extensions != 0 || flags != 0 || (create && vmID != 0) || (!create && vmID == 0) {
 		return 0, linuxerr.EINVAL
 	}
 	n, err := hostIoctl(fd.hostFD, cmd, params)
