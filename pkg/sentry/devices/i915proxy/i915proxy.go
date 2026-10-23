@@ -693,39 +693,30 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	execFlags := binary.LittleEndian.Uint64(params[40:48])
-	if execFlags&^i915ExecFlagMask != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
 	objectsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
 	objectCount := binary.LittleEndian.Uint32(params[8:12])
 	flags := binary.LittleEndian.Uint64(params[40:48])
-	if flags&^i915ExecFlagMask != 0 || flags&i915ExecUseExtensionsFlag != 0 ||
-		flags&(i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag|i915ExecFenceArrayFlag) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	// Cliprects and extension/fence pointer arrays are not implemented.
-	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	// rsvd1 may hold only a 32-bit context ID. rsvd2 must be zero.
-	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
 	if objectCount == 0 || objectCount > maxExecBufferObjects || objectsAddr == 0 {
 		return 0, linuxerr.EINVAL
 	}
+	if flags&^i915ExecFlagMask != 0 ||
+		flags&(i915ExecUseExtensionsFlag|i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag|i915ExecFenceArrayFlag) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	// Cliprect, extension, and fence pointer arrays are not implemented.
+	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	// rsvd1 carries a 32-bit context ID. rsvd2 requires FD translation for
+	// sync-file fences and must remain zero until that path is implemented.
+	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+
 	objects := make([]byte, int(objectCount)*i915ExecObject2Size)
 	if _, err := task.CopyInBytes(objectsAddr, objects); err != nil {
 		return 0, err
 	}
-
 	relocations := make([][]byte, int(objectCount))
 	relocationAddrs := make([]hostarch.Addr, int(objectCount))
 	totalRelocations := uint32(0)
@@ -734,10 +725,14 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		handle := binary.LittleEndian.Uint32(objects[base : base+4])
 		count := binary.LittleEndian.Uint32(objects[base+4 : base+8])
 		ptr := hostarch.Addr(binary.LittleEndian.Uint64(objects[base+8 : base+16]))
+		alignment := binary.LittleEndian.Uint64(objects[base+16 : base+24])
 		objectFlags := binary.LittleEndian.Uint64(objects[base+32 : base+40])
-		if handle == 0 || objectFlags&^uint64(0x1f|(1<<6)|(1<<7)) != 0 ||
+		if handle == 0 || objectFlags&^uint64(0xff) != 0 ||
 			binary.LittleEndian.Uint64(objects[base+40:base+48]) != 0 ||
 			binary.LittleEndian.Uint64(objects[base+48:base+56]) != 0 {
+			return 0, linuxerr.EINVAL
+		}
+		if alignment != 0 && alignment&(alignment-1) != 0 {
 			return 0, linuxerr.EINVAL
 		}
 		if count == 0 && ptr != 0 {
@@ -760,37 +755,8 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		}
 	}
 
-	fenceCount := binary.LittleEndian.Uint32(params[28:32])
-	fencePtr := hostarch.Addr(binary.LittleEndian.Uint64(params[32:40]))
-	flags := binary.LittleEndian.Uint64(params[40:48])
-	var fences []byte
-	if flags&i915ExecUseExtensionsFlag != 0 {
-		// Extension chains contain nested, versioned pointers. They are not
-		// forwarded until each supported extension has an explicit translator.
-		return 0, linuxerr.EINVAL
-	}
-	if flags&(i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag) != 0 {
-		// These legacy paths carry host sync-file FDs in rsvd2. They must be
-		// translated through the guest FD table before they can be forwarded.
-		return 0, linuxerr.EINVAL
-	}
-	// rsvd1 carries the 32-bit context ID. rsvd2 is only used by the rejected
-	// sync-file paths above and must remain zero.
-	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	if fenceCount != 0 {
-		if flags&i915ExecFenceArrayFlag == 0 || fenceCount > maxExecBufferFences || fencePtr == 0 {
-			return 0, linuxerr.EINVAL
-		}
-		fences = make([]byte, int(fenceCount)*i915ExecFenceSize)
-		if _, err := task.CopyInBytes(fencePtr, fences); err != nil {
-			return 0, err
-		}
-	} else if flags&i915ExecFenceArrayFlag != 0 && fencePtr != 0 {
-		return 0, linuxerr.EINVAL
-	}
-
+	// The GEM handle table and host file description must remain consistent
+	// for the full duration of submission.
 	fd.gemMu.Lock()
 	for i := 0; i < int(objectCount); i++ {
 		handle := binary.LittleEndian.Uint32(objects[i*i915ExecObject2Size : i*i915ExecObject2Size+4])
@@ -806,9 +772,8 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 			}
 		}
 	}
+	n, err := hostIoctlI915Execbuffer2(fd.hostFD, cmd, params, objects, relocations, nil)
 	fd.gemMu.Unlock()
-
-	n, err := hostIoctlI915Execbuffer2(fd.hostFD, cmd, params, objects, relocations, fences)
 	if err != nil {
 		return n, err
 	}
