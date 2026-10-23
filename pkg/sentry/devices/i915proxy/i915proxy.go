@@ -323,10 +323,14 @@ type renderFD struct {
 	hostFD int32 `state:"nosave"`
 	memmapFile renderMemmapFile
 
-	// gemMu protects gemObjects.
+	// gemMu protects GEM, context, and VM tracking for this file description.
 	gemMu sync.Mutex `state:"nosave"`
 	// +checklocks:gemMu
 	gemObjects map[uint32]uint64 `state:"nosave"`
+	// +checklocks:gemMu
+	contexts map[uint32]struct{} `state:"nosave"`
+	// +checklocks:gemMu
+	vms map[uint32]struct{} `state:"nosave"`
 }
 
 // Release implements vfs.FileDescriptionImpl.Release.
