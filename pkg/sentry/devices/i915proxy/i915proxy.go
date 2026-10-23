@@ -733,6 +733,16 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		return 0, linuxerr.EINVAL
 	}
 
+	fd.gemMu.Lock()
+	for i := 0; i < int(objectCount); i++ {
+		handle := binary.LittleEndian.Uint32(objects[i*i915ExecObject2Size : i*i915ExecObject2Size+4])
+		if _, ok := fd.gemObjects[handle]; !ok {
+			fd.gemMu.Unlock()
+			return 0, linuxerr.EINVAL
+		}
+	}
+	fd.gemMu.Unlock()
+
 	n, err := hostIoctlI915Execbuffer2(fd.hostFD, cmd, params, objects, relocations, fences)
 	if err != nil {
 		return n, err
