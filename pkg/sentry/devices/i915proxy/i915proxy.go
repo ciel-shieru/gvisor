@@ -663,7 +663,10 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		handle := binary.LittleEndian.Uint32(objects[base : base+4])
 		count := binary.LittleEndian.Uint32(objects[base+4 : base+8])
 		ptr := hostarch.Addr(binary.LittleEndian.Uint64(objects[base+8 : base+16]))
-		if handle == 0 || binary.LittleEndian.Uint64(objects[base+40:base+48]) != 0 || binary.LittleEndian.Uint64(objects[base+48:base+56]) != 0 {
+		objectFlags := binary.LittleEndian.Uint64(objects[base+32 : base+40])
+		if handle == 0 || objectFlags&^uint64(0x1f|(1<<6)|(1<<7)) != 0 ||
+			binary.LittleEndian.Uint64(objects[base+40:base+48]) != 0 ||
+			binary.LittleEndian.Uint64(objects[base+48:base+56]) != 0 {
 			return 0, linuxerr.EINVAL
 		}
 		if count == 0 && ptr != 0 {
