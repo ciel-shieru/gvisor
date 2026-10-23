@@ -79,6 +79,11 @@ func TestIoctlABIEncodings(t *testing.T) {
 		want uintptr
 	}{
 		{name: "GEM_CREATE", got: drmIoctlI915GemCreate, want: 0xc010645b},
+		{name: "GEM_PREAD", got: drmIoctlI915GemPread, want: 0x4020645c},
+		{name: "GEM_PWRITE", got: drmIoctlI915GemPwrite, want: 0x4020645d},
+		{name: "GEM_SW_FINISH", got: drmIoctlI915GemSWFinish, want: 0x40046460},
+		{name: "GEM_GET_APERTURE", got: drmIoctlI915GemGetAperture, want: 0x80106463},
+		{name: "GEM_MADVISE", got: drmIoctlI915GemMadvise, want: 0xc00c6466},
 		{name: "GEM_MMAP_GTT", got: drmIoctlI915GemMmapGTT, want: 0xc0106464},
 		{name: "GEM_MMAP_OFFSET", got: drmIoctlI915GemMmapOffset, want: 0xc0206464},
 		{name: "GEM_EXECBUFFER2", got: drmIoctlI915GemExecbuffer2, want: 0x40406469},
@@ -104,6 +109,11 @@ func TestSupportedIoctl(t *testing.T) {
 		drmIoctlGemClose,
 		drmIoctlI915GetParam,
 		drmIoctlI915GemCreate,
+		drmIoctlI915GemPread,
+		drmIoctlI915GemPwrite,
+		drmIoctlI915GemSWFinish,
+		drmIoctlI915GemGetAperture,
+		drmIoctlI915GemMadvise,
 		drmIoctlI915GemBusy,
 		drmIoctlI915GemSetDomain,
 		drmIoctlI915GemSetTiling,
