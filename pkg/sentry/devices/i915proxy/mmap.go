@@ -67,7 +67,7 @@ type renderMappable struct {
 
 // Translate implements memmap.Mappable.Translate.
 func (m renderMappable) Translate(_ context.Context, _, optional memmap.MappableRange, _ hostarch.AccessType) ([]memmap.Translation, error) {
-	end := optional.Start + optional.Length()
+	end := optional.End
 	if optional.Start < m.base || optional.Start > math.MaxInt64 || end > m.base+m.length {
 		return nil, linuxerr.EINVAL
 	}
@@ -172,12 +172,15 @@ func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.Memo
 	if mf.offsetTypes == nil {
 		mf.offsetTypes = make(map[uint64]mmapOffsetInfo)
 	}
+	info := mmapOffsetInfo{handle: handle, memoryType: memoryType, length: length}
+	if existing, ok := mf.offsetTypes[offset]; ok {
+		if existing != info {
+			return fmt.Errorf("i915proxy: host reused mmap offset %#x with different object metadata", offset)
+		}
+		return nil
+	}
 	if len(mf.offsetTypes) >= maxTrackedMmapOffsets {
 		return linuxerr.ENOMEM
-	}
-	info := mmapOffsetInfo{handle: handle, memoryType: memoryType, length: length}
-	if existing, ok := mf.offsetTypes[offset]; ok && existing != info {
-		return fmt.Errorf("i915proxy: host reused mmap offset %#x with different object metadata", offset)
 	}
 	mf.offsetTypes[offset] = info
 	return nil
@@ -239,7 +242,7 @@ func (mf *renderMemmapFile) Close() error {
 	mf.fdValid = false
 	mf.mu.Unlock()
 	if fdValid && fd >= 0 {
-		if err := unix.Close(fd); err != nil {
+		if err := unix.Close(int(fd)); err != nil {
 			errs = append(errs, fmt.Errorf("close host DRM fd: %w", err))
 		}
 	}
