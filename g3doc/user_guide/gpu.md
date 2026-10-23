@@ -16,6 +16,21 @@ NVIDIA's driver on the host. It provides access to NVIDIA GPU-specific devices
 to the sandboxed application. The GPU application can run unmodified inside the
 sandbox and interact transparently with these devices.
 
+## Experimental Intel i915 proxy
+
+This fork also contains an **experimental, incomplete** proxy for explicitly
+allocated Intel `i915` render nodes, enabled with `runsc --i915proxy`. It
+currently implements only a subset of the DRM/i915 UAPI and is not qualified
+for production graphics or media workloads. OpenGL, Vulkan, VA-API, oneVPL,
+Quick Sync decoding/encoding, and Jellyfin/Plex/Emby transcoding are **not
+claimed to work** until the remaining UAPI coverage, builds, tests, and real
+Intel hardware validation are complete. Do not enable this option for untrusted
+production workloads based on this experimental implementation.
+
+See the
+[implementation status and validation plan](../proposals/intel_i915_driver_proxy.md)
+for current limitations and the required qualification matrix.
+
 ## Environments
 
 The `runsc` flag `--nvproxy` must be specified to enable GPU support. gVisor

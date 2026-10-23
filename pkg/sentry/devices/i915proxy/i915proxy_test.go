@@ -1,0 +1,180 @@
+// Copyright 2026 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package i915proxy
+
+import "testing"
+
+func TestValidateDevice(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dev Device
+		wantErr bool
+	}{
+		{
+			name: "valid render node",
+			dev: Device{Path: "/dev/dri/renderD128", Major: DRMDeviceMajor, Minor: 128},
+		},
+		{
+			name: "wrong major",
+			dev: Device{Path: "/dev/dri/renderD128", Major: 1, Minor: 128},
+			wantErr: true,
+		},
+		{
+			name: "primary node rejected",
+			dev: Device{Path: "/dev/dri/card0", Major: DRMDeviceMajor, Minor: 0},
+			wantErr: true,
+		},
+		{
+			name: "control node rejected",
+			dev: Device{Path: "/dev/dri/controlD64", Major: DRMDeviceMajor, Minor: 64},
+			wantErr: true,
+		},
+		{
+			name: "path traversal rejected",
+			dev: Device{Path: "/dev/dri/../renderD128", Major: DRMDeviceMajor, Minor: 128},
+			wantErr: true,
+		},
+		{
+			name: "mismatched minor rejected",
+			dev: Device{Path: "/dev/dri/renderD129", Major: DRMDeviceMajor, Minor: 128},
+			wantErr: true,
+		},
+		{
+			name: "non-numeric suffix rejected",
+			dev: Device{Path: "/dev/dri/renderD128x", Major: DRMDeviceMajor, Minor: 128},
+			wantErr: true,
+		},
+		{
+			name: "padded node number rejected",
+			dev: Device{Path: "/dev/dri/renderD0128", Major: DRMDeviceMajor, Minor: 128},
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDevice(tc.dev)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateDevice(%+v) error = %v, wantErr %t", tc.dev, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestI915GemCreateCommandNumber(t *testing.T) {
+	if got := drmIoctlI915GemCreate; got != uintptr(0xc010645b) {
+		t.Fatalf("DRM_IOCTL_I915_GEM_CREATE = %#x, want %#x", got, uintptr(0xc010645b))
+	}
+}
+
+func TestGEMCreateExtStructureSizes(t *testing.T) {
+	if got := i915GemCreateExtSize; got != 24 {
+		t.Fatalf("GEM_CREATE_EXT structure size = %d, want 24", got)
+	}
+	if got := i915GemCreateExtMemoryRegionsSize; got != 48 {
+		t.Fatalf("GEM_CREATE_EXT_MEMORY_REGIONS structure size = %d, want 48", got)
+	}
+	if got := i915GemMemoryClassInstanceSize; got != 8 {
+		t.Fatalf("GEM memory class/instance structure size = %d, want 8", got)
+	}
+}
+
+func TestIoctlABIEncodings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{name: "GEM_CREATE", got: drmIoctlI915GemCreate, want: 0xc010645b},
+		{name: "GEM_PREAD", got: drmIoctlI915GemPread, want: 0x4020645c},
+		{name: "GEM_PWRITE", got: drmIoctlI915GemPwrite, want: 0x4020645d},
+		{name: "GEM_SW_FINISH", got: drmIoctlI915GemSWFinish, want: 0x40046460},
+		{name: "GEM_GET_APERTURE", got: drmIoctlI915GemGetAperture, want: 0x80106463},
+		{name: "GEM_MADVISE", got: drmIoctlI915GemMadvise, want: 0xc00c6466},
+		{name: "GEM_MMAP_GTT", got: drmIoctlI915GemMmapGTT, want: 0xc0106464},
+		{name: "GEM_MMAP_OFFSET", got: drmIoctlI915GemMmapOffset, want: 0xc0206464},
+		{name: "GEM_EXECBUFFER2", got: drmIoctlI915GemExecbuffer2, want: 0x40406469},
+		{name: "GEM_EXECBUFFER2_WR", got: drmIoctlI915GemExecbuffer2WR, want: 0xc0406469},
+		{name: "QUERY", got: drmIoctlI915Query, want: 0xc0106479},
+		{name: "GET_RESET_STATS", got: drmIoctlI915GetResetStats, want: 0xc0186472},
+		{name: "CONTEXT_CREATE", got: drmIoctlI915GemContextCreate, want: 0xc008646d},
+		{name: "CONTEXT_CREATE_EXT", got: drmIoctlI915GemContextCreateExt, want: 0xc010646d},
+		{name: "CONTEXT_DESTROY", got: drmIoctlI915GemContextDestroy, want: 0x4008646e},
+		{name: "CONTEXT_GETPARAM", got: drmIoctlI915GemContextGetParam, want: 0xc0186474},
+		{name: "CONTEXT_SETPARAM", got: drmIoctlI915GemContextSetParam, want: 0xc0186475},
+		{name: "VM_CREATE", got: drmIoctlI915GemVMCreate, want: 0xc010647a},
+		{name: "VM_DESTROY", got: drmIoctlI915GemVMDestroy, want: 0x4010647b},
+		{name: "GEM_CREATE_EXT", got: drmIoctlI915GemCreateExt, want: 0xc018647c},
+		{name: "PRIME_HANDLE_TO_FD", got: drmIoctlPrimeHandleToFD, want: 0xc00c642d},
+		{name: "PRIME_FD_TO_HANDLE", got: drmIoctlPrimeFDToHandle, want: 0xc00c642e},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Fatalf("ioctl encoding = %#x, want %#x", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSupportedIoctl(t *testing.T) {
+	for _, cmd := range []uintptr{
+		drmIoctlVersion,
+		drmIoctlGetMagic,
+		drmIoctlGetCap,
+		drmIoctlSetClientCap,
+		drmIoctlGemClose,
+		drmIoctlI915GetParam,
+		drmIoctlI915GemCreate,
+		drmIoctlI915GemPread,
+		drmIoctlI915GemPwrite,
+		drmIoctlI915GemSWFinish,
+		drmIoctlI915GemGetAperture,
+		drmIoctlI915GemMadvise,
+		drmIoctlI915GemBusy,
+		drmIoctlI915GemSetDomain,
+		drmIoctlI915GemSetTiling,
+		drmIoctlI915GemGetTiling,
+		drmIoctlI915GemMmapGTT,
+		drmIoctlI915GemMmapOffset,
+		drmIoctlI915GemExecbuffer2,
+		drmIoctlI915GemExecbuffer2WR,
+		drmIoctlI915GemWait,
+		drmIoctlI915GemContextCreate,
+		drmIoctlI915GemContextCreateExt,
+		drmIoctlI915GemContextDestroy,
+		drmIoctlI915GemSetCaching,
+		drmIoctlI915GemGetCaching,
+		drmIoctlI915GetResetStats,
+		drmIoctlI915GemContextGetParam,
+		drmIoctlI915GemContextSetParam,
+		drmIoctlI915Query,
+		drmIoctlI915GemVMCreate,
+		drmIoctlI915GemVMDestroy,
+		drmIoctlI915GemCreateExt,
+		drmIoctlPrimeHandleToFD,
+		drmIoctlPrimeFDToHandle,
+	} {
+		if !SupportedIoctl(cmd) {
+			t.Errorf("SupportedIoctl(%#x) = false, want true", cmd)
+		}
+	}
+	for _, cmd := range []uintptr{
+		0,
+		0x40406468, // Unimplemented DRM ioctl of the same size.
+		0xc0106440, // Unimplemented DRM ioctl.
+	} {
+		if SupportedIoctl(cmd) {
+			t.Errorf("SupportedIoctl(%#x) = true, want false", cmd)
+		}
+	}
+}

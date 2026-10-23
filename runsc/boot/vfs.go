@@ -37,6 +37,7 @@ import (
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/rdma"
 	"gvisor.dev/gvisor/pkg/sentry/checkpoint"
+	"gvisor.dev/gvisor/pkg/sentry/devices/i915proxy"
 	"gvisor.dev/gvisor/pkg/sentry/devices/memdev"
 	"gvisor.dev/gvisor/pkg/sentry/devices/nvproxy"
 	"gvisor.dev/gvisor/pkg/sentry/devices/nvproxy/nvconf"
@@ -174,11 +175,50 @@ func registerFilesystems(k *kernel.Kernel, info *containerInfo, rdmaSnapshot *rd
 	if err := nvproxyRegisterDevices(info, vfsObj, k.NvidiaDriverVersion); err != nil {
 		return err
 	}
+	if err := i915proxyRegisterDevices(info, vfsObj); err != nil {
+		return err
+	}
 
 	if err := rdmaproxyRegisterDevices(info, vfsObj, rdmaSnapshot); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// i915proxyRegisterDevices registers only explicitly assigned Intel i915
+// render nodes. Primary and control nodes are rejected because this proxy does
+// not implement display or privileged DRM interfaces.
+func i915proxyRegisterDevices(info *containerInfo, vfsObj *vfs.VirtualFilesystem) error {
+	if !info.conf.I915Proxy {
+		return nil
+	}
+	if info.spec.Linux == nil {
+		return fmt.Errorf("i915proxy is enabled but the OCI spec has no Linux device list")
+	}
+	devices := make([]i915proxy.Device, 0, len(info.spec.Linux.Devices))
+	for _, dev := range info.spec.Linux.Devices {
+		if !strings.HasPrefix(dev.Path, "/dev/dri/") {
+			continue
+		}
+		if !strings.HasPrefix(dev.Path, "/dev/dri/renderD") {
+			return fmt.Errorf("i915proxy: unsupported DRM device %q; only /dev/dri/renderD<num> render nodes are accepted", dev.Path)
+		}
+		if dev.Type != "c" || dev.Major != int64(i915proxy.DRMDeviceMajor) || dev.Minor < 0 || dev.Minor > 0xffffffff {
+			return fmt.Errorf("i915proxy: invalid character device assignment for %q (type=%q major=%d minor=%d)", dev.Path, dev.Type, dev.Major, dev.Minor)
+		}
+		devices = append(devices, i915proxy.Device{
+			Path: dev.Path,
+			Major: uint32(dev.Major),
+			Minor: uint32(dev.Minor),
+		})
+	}
+	if len(devices) == 0 {
+		return fmt.Errorf("i915proxy is enabled but no /dev/dri/renderD<num> device was allocated")
+	}
+	if err := i915proxy.Register(vfsObj, devices, true /* useDevGofer */); err != nil {
+		return fmt.Errorf("registering i915proxy devices: %w", err)
+	}
 	return nil
 }
 

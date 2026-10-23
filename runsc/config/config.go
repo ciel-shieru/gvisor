@@ -370,6 +370,9 @@ type Config struct {
 	// AppHugePages enables support for application huge pages.
 	AppHugePages bool `flag:"app-huge-pages"`
 
+	// I915Proxy enables the restricted Intel i915 render-node proxy.
+	I915Proxy bool `flag:"i915proxy"`
+
 	// NVProxy enables support for Nvidia GPUs.
 	NVProxy bool `flag:"nvproxy"`
 

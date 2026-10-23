@@ -68,6 +68,7 @@ go_library(
         "//pkg/sentry/control",
         "//pkg/sentry/control/controlapi",
         "//pkg/sentry/devices/memdev",
+        "//pkg/sentry/devices/i915proxy",
         "//pkg/sentry/devices/nvproxy",
         "//pkg/sentry/devices/nvproxy/nvconf",
         "//pkg/sentry/devices/rdmaproxy",
