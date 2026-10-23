@@ -663,24 +663,33 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	}
 	handle := binary.LittleEndian.Uint32(params[8:12])
 	actualSize := binary.LittleEndian.Uint64(params[0:8])
-	if handle == 0 || actualSize == 0 || actualSize > math.MaxInt64 {
+	if handle == 0 {
+		return n, linuxerr.EIO
+	}
+	if _, exists := fd.gemObjects[handle]; exists {
+		return n, linuxerr.EIO
+	}
+	if actualSize == 0 || actualSize > math.MaxInt64 {
+		closeParams := make([]byte, 8)
+		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
+		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
+		if closeErr != nil {
+			return n, fmt.Errorf("host returned invalid GEM size and closing its handle failed: %w", closeErr)
+		}
 		return n, linuxerr.EIO
 	}
 	if fd.gemObjects == nil {
 		fd.gemObjects = make(map[uint32]uint64)
-	}
-	if _, exists := fd.gemObjects[handle]; exists {
-		return n, linuxerr.EIO
 	}
 	fd.gemObjects[handle] = actualSize
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
 		closeParams := make([]byte, 8)
 		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
-		delete(fd.gemObjects, handle)
 		if closeErr != nil {
 			return n, fmt.Errorf("copying GEM create result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
 		}
+		delete(fd.gemObjects, handle)
 		return n, err
 	}
 	return n, nil
