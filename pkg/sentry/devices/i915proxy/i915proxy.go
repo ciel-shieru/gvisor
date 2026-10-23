@@ -157,7 +157,7 @@ func Register(vfsObj *vfs.VirtualFilesystem, devices []Device, useDevGofer bool)
 			openFDs: make(map[*renderFD]struct{}),
 		}
 		if err := vfsObj.RegisterDevice(vfs.CharDevice, dev.Major, dev.Minor, renderDev, &vfs.RegisterDeviceOptions{
-			GroupName: "drm",
+			GroupName: "render",
 		}); err != nil {
 			return fmt.Errorf("i915proxy: registering %s: %w", dev.Path, err)
 		}
