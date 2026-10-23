@@ -647,6 +647,19 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	}
 	objectsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
 	objectCount := binary.LittleEndian.Uint32(params[8:12])
+	flags := binary.LittleEndian.Uint64(params[40:48])
+	if flags&^i915ExecFlagMask != 0 || flags&i915ExecUseExtensionsFlag != 0 ||
+		flags&(i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag|i915ExecFenceArrayFlag) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	// Cliprects and extension/fence pointer arrays are not implemented.
+	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	// rsvd1 may hold only a 32-bit context ID. rsvd2 must be zero.
+	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
 	if objectCount == 0 || objectCount > maxExecBufferObjects || objectsAddr == 0 {
 		return 0, linuxerr.EINVAL
 	}
