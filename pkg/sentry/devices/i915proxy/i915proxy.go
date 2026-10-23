@@ -365,9 +365,9 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915Query:
 		return fd.ioctlQuery(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemVMCreate:
-		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 0, true)
+		return fd.ioctlVMControl(task, cmd, args[2].Pointer(), true)
 	case drmIoctlI915GemVMDestroy:
-		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 0, false)
+		return fd.ioctlVMControl(task, cmd, args[2].Pointer(), false)
 	case drmIoctlI915GemCreateExt:
 		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 24, 16)
 	default:
