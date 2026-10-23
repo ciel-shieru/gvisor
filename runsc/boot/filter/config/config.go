@@ -119,7 +119,7 @@ func Warnings(opt Options) []string {
 		warnings = append(warnings, "instrumentation enabled: syscall filters less restrictive!")
 	}
 	if opt.I915Proxy {
-		warnings = append(warnings, "Intel i915 GPU driver proxy enabled: host ioctl attack surface increased!")
+		warnings = append(warnings, "Intel i915 GPU proxy enabled: host DRM ioctl and shared mmap attack surface increased!")
 	}
 	if opt.NVProxy {
 		warnings = append(warnings, "Nvidia GPU driver proxy enabled: syscall filters less restrictive!")
