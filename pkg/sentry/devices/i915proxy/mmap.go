@@ -40,6 +40,9 @@ func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) er
 	if unusable {
 		return linuxerr.EIO
 	}
+	if opts.Perms.Execute || opts.MaxPerms.Execute {
+		return linuxerr.EACCES
+	}
 	if opts.Offset > math.MaxInt64 || opts.Length > math.MaxInt64-opts.Offset {
 		return linuxerr.EOVERFLOW
 	}
@@ -86,7 +89,7 @@ func (m renderMappable) Translate(_ context.Context, _, optional memmap.Mappable
 			memoryType: m.memoryType,
 		},
 		Offset: optional.Start,
-		Perms: hostarch.AnyAccess,
+		Perms: hostarch.AccessType{Read: true, Write: true},
 	}}, nil
 }
 
