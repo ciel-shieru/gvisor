@@ -756,6 +756,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
 		if closeErr != nil {
+			fd.unusable = true
 			return n, fmt.Errorf("host returned invalid GEM size and closing its handle failed: %w", closeErr)
 		}
 		return n, linuxerr.EIO
@@ -770,6 +771,7 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 		_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
 		if closeErr != nil {
+			fd.unusable = true
 			return n, fmt.Errorf("copying GEM create result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
 		}
 		delete(fd.gemObjects, handle)
@@ -826,6 +828,7 @@ func (fd *renderFD) ioctlContextCreate(task *kernel.Task, cmd uintptr, addr host
 			delete(fd.contexts, ctxID)
 			return n, err
 		}
+		fd.unusable = true
 		return n, fmt.Errorf("copying context-create result to application failed: %v; destroying unreturned context failed: %w", err, closeErr)
 	}
 	return n, nil
@@ -1015,6 +1018,7 @@ func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch
 				delete(fd.vms, vmID)
 				return n, err
 			}
+			fd.unusable = true
 			return n, fmt.Errorf("copying VM-create result to application failed: %v; destroying unreturned VM failed: %w", err, closeErr)
 		}
 		return n, nil
