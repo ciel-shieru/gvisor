@@ -1142,6 +1142,9 @@ func (fd *renderFD) ioctlGetParam(task *kernel.Task, addr hostarch.Addr, size ui
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
 	valuePtr := hostarch.Addr(binary.LittleEndian.Uint64(params[8:16]))
 	if valuePtr == 0 {
 		return 0, linuxerr.EFAULT
