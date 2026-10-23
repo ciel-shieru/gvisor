@@ -247,15 +247,18 @@ Do not advertise KVM support until the real-hardware integration tests pass.
 The current branch implements a restricted render-node proxy with a runtime
 `--i915proxy` opt-in. It validates the allocated DRM major/minor and confirms
 that the host render node reports the `i915` driver. The host ioctl policy
-allows an explicit command set, and the implemented handlers translate
-Sentry/application pointers for DRM version queries, i915 getparam, i915 query,
-and execbuffer2. GEM handles are tracked per open file description, and
-render-node mmap offsets are checked against tracked GEM objects and object
-sizes.
+allows an explicit command set, and implemented handlers translate
+Sentry/application pointers for DRM version queries, i915 getparam and query,
+execbuffer2, and bounded GEM pread/pwrite transfers. The subset also includes
+GEM madvise, aperture, context/VM operations, and restricted DRM PRIME
+handle-to-FD / FD-to-handle translation using opaque sandbox dma-buf wrappers.
 
-The implementation also rejects checkpoint/restore while an i915 device file
-is open, and marks mappings as unsavable. This avoids restoring a stale host
-device FD or an old GPU execution context.
+GEM handles are tracked per open file description, and render-node mmap offsets
+are checked against tracked GEM objects and object sizes. The implementation
+hides syncobj capabilities while syncobj/fence translation remains unavailable.
+It also rejects checkpoint/restore while an i915 render-node or exported
+dma-buf descriptor is open, and marks mappings as unsavable. This avoids
+restoring stale host device FDs or GPU execution state.
 
 The current implementation is incomplete. It does not yet provide:
 
