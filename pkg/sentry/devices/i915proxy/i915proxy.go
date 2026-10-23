@@ -463,8 +463,8 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 		return n, err
 	}
 	delete(fd.gemObjects, handle)
-	fd.gemMu.Unlock()
 	fd.memmapFile.forgetOffsets(handle)
+	fd.gemMu.Unlock()
 	return n, nil
 }
 
