@@ -19,6 +19,7 @@ package i915proxy
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -288,6 +289,11 @@ type renderFD struct {
 	dev *renderDevice
 	hostFD int32
 	memmapFile renderMemmapFile
+
+	// gemMu protects gemObjects.
+	gemMu sync.Mutex `state:"nosave"`
+	// +checklocks:gemMu
+	gemObjects map[uint32]uint64 `state:"nosave"`
 }
 
 // Release implements vfs.FileDescriptionImpl.Release.
@@ -318,7 +324,7 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlGemClose:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
 	case drmIoctlI915GemCreate:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 16, 0)
 	case drmIoctlI915GemBusy:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
 	case drmIoctlI915GemSetDomain:
@@ -356,7 +362,7 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemVMDestroy:
 		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 0, false)
 	case drmIoctlI915GemCreateExt:
-		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 24, 16, true)
+		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 24, 16)
 	default:
 		return 0, linuxerr.ENOTTY
 	}
@@ -394,6 +400,60 @@ const (
 	i915ExecFenceArrayFlag = uint64(1 << 19)
 	i915ExecUseExtensionsFlag = uint64(1 << 21)
 )
+
+const maxTrackedGEMObjects = 1 << 16
+
+func (fd *renderFD) gemObjectSize(handle uint32) (uint64, bool) {
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	size, ok := fd.gemObjects[handle]
+	return size, ok
+}
+
+func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int) (uintptr, error) {
+	if linux.IOC_SIZE(uint32(cmd)) != size || (size != 16 && size != 24) {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	requestedSize := binary.LittleEndian.Uint64(params[0:8])
+	if requestedSize == 0 || requestedSize > math.MaxInt64 {
+		return 0, linuxerr.EINVAL
+	}
+	if extensionOffset != 0 {
+		if extensionOffset+8 > int(size) || binary.LittleEndian.Uint64(params[extensionOffset:extensionOffset+8]) != 0 {
+			return 0, linuxerr.EINVAL
+		}
+	}
+
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	if len(fd.gemObjects) >= maxTrackedGEMObjects {
+		return 0, linuxerr.ENOMEM
+	}
+	n, err := hostIoctl(fd.hostFD, cmd, params)
+	if err != nil {
+		return n, err
+	}
+	handle := binary.LittleEndian.Uint32(params[8:12])
+	actualSize := binary.LittleEndian.Uint64(params[0:8])
+	if handle == 0 || actualSize == 0 || actualSize > math.MaxInt64 {
+		return n, linuxerr.EIO
+	}
+	if fd.gemObjects == nil {
+		fd.gemObjects = make(map[uint32]uint64)
+	}
+	if _, exists := fd.gemObjects[handle]; exists {
+		return n, linuxerr.EIO
+	}
+	fd.gemObjects[handle] = actualSize
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
 
 func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int, copyOut bool) (uintptr, error) {
 	if linux.IOC_SIZE(uint32(cmd)) != size || extensionOffset < 0 || extensionOffset+8 > int(size) {
@@ -603,12 +663,19 @@ func (fd *renderFD) ioctlGemMmapGTT(task *kernel.Task, addr hostarch.Addr, size 
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	objectSize, ok := fd.gemObjectSize(binary.LittleEndian.Uint32(params[0:4]))
+	if !ok {
+		return 0, linuxerr.EINVAL
+	}
 	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMmapGTT, params)
 	if err != nil {
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine, objectSize); err != nil {
 		return n, err
 	}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
@@ -624,6 +691,13 @@ func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, si
 	params := make([]byte, size)
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
+	}
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	objectSize, ok := fd.gemObjectSize(binary.LittleEndian.Uint32(params[0:4]))
+	if !ok {
+		return 0, linuxerr.EINVAL
 	}
 	// Extensions are user pointers. This implementation supports only the
 	// pointer-free base structure until every extension has a reviewed handler.
@@ -650,7 +724,7 @@ func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, si
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, memoryType); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, memoryType, objectSize); err != nil {
 		return n, err
 	}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
