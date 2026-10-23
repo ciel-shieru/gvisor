@@ -645,6 +645,16 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
+	execFlags := binary.LittleEndian.Uint64(params[40:48])
+	if execFlags&^i915ExecFlagMask != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
 	objectsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
 	objectCount := binary.LittleEndian.Uint32(params[8:12])
 	flags := binary.LittleEndian.Uint64(params[40:48])
