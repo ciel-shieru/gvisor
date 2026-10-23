@@ -83,12 +83,12 @@ func newDMABufFDWrapper(task *kernel.Task, dev *renderDevice, hostFD int32, size
 		_ = unix.Close(int(hostFD))
 		return -1, err
 	}
+	dev.addDMABufFD(fd)
 	defer fd.vfsfd.DecRef(task)
 	sandboxFD, err := task.NewFDFrom(0, &fd.vfsfd, kernel.FDFlags{CloseOnExec: closeOnExec})
 	if err != nil {
 		return -1, err
 	}
-	dev.addDMABufFD(fd)
 	return sandboxFD, nil
 }
 
@@ -183,6 +183,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 	if handle == 0 {
 		return n, linuxerr.EIO
 	}
+	_, alreadyTracked := fd.gemObjects[handle]
 	if existingSize, exists := fd.gemObjects[handle]; exists {
 		if existingSize != dmabuf.size {
 			return n, fmt.Errorf("i915proxy: imported GEM handle %d has size %d, dma-buf size is %d", handle, existingSize, dmabuf.size)
@@ -193,12 +194,15 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 	// Restore the sandbox FD number; host FD numbers never escape the proxy.
 	binary.LittleEndian.PutUint32(params[8:12], uint32(sandboxFD))
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
-		if _, exists := fd.gemObjects[handle]; exists {
-			// Do not close a handle that was already tracked before this call.
-			// The host PRIME ioctl can return an existing handle for this dma-buf.
-			if fd.gemObjects[handle] == dmabuf.size {
-				// A conservative error path: the caller can close the handle if
-				// it was already known. Do not remove it from tracking here.
+		if !alreadyTracked {
+			closeParams := make([]byte, 8)
+			binary.LittleEndian.PutUint32(closeParams[0:4], handle)
+			_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
+			if closeErr == nil {
+				delete(fd.gemObjects, handle)
+				fd.memmapFile.forgetOffsets(handle)
+			} else {
+				return n, fmt.Errorf("copying PRIME import result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
 			}
 		}
 		return n, err
