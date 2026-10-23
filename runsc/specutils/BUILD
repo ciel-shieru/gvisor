@@ -12,7 +12,6 @@ go_library(
         "fs.go",
         "gofer_conf.go",
         "hooks.go",
-        "i915.go",
         "namespace.go",
         "nvidia.go",
         "rdma.go",
