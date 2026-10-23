@@ -1052,8 +1052,13 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		flags&(i915ExecUseExtensionsFlag|i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag|i915ExecFenceArrayFlag) != 0 {
 		return 0, linuxerr.EINVAL
 	}
-	// Cliprect, extension, and fence pointer arrays are not implemented.
-	if binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
+	if flags&0x3f > 4 || flags&(3<<6) == 3<<6 || flags&(3<<13) == 3<<13 {
+		return 0, linuxerr.EINVAL
+	}
+	// Deprecated DRI1 fields must be zero. Cliprect, extension, and fence
+	// pointer arrays are not implemented.
+	if binary.LittleEndian.Uint32(params[20:24]) != 0 || binary.LittleEndian.Uint32(params[24:28]) != 0 ||
+		binary.LittleEndian.Uint32(params[28:32]) != 0 || binary.LittleEndian.Uint64(params[32:40]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
 	// rsvd1 carries a 32-bit context ID. rsvd2 requires FD translation for
@@ -1117,14 +1122,26 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 			return 0, linuxerr.EINVAL
 		}
 	}
+	batchIndex := int(objectCount) - 1
+	if flags&(1<<18) != 0 {
+		batchIndex = 0
+	}
+	batchOffset := uint64(binary.LittleEndian.Uint32(params[12:16]))
+	batchLength := uint64(binary.LittleEndian.Uint32(params[16:20]))
 	for i := 0; i < int(objectCount); i++ {
 		handle := binary.LittleEndian.Uint32(objects[i*i915ExecObject2Size : i*i915ExecObject2Size+4])
-		if _, ok := fd.gemObjects[handle]; !ok {
+		objectSize, ok := fd.gemObjects[handle]
+		if !ok {
 			fd.gemMu.Unlock()
 			return 0, linuxerr.EINVAL
 		}
 		for offset := 0; offset < len(relocations[i]); offset += i915RelocationEntrySize {
 			targetHandle := binary.LittleEndian.Uint32(relocations[i][offset : offset+4])
+			relocationOffset := binary.LittleEndian.Uint64(relocations[i][offset+8 : offset+16])
+			if relocationOffset > objectSize || objectSize-relocationOffset < 4 {
+				fd.gemMu.Unlock()
+				return 0, linuxerr.EINVAL
+			}
 			if flags&i915ExecHandleLUTFlag != 0 {
 				if targetHandle >= objectCount {
 					fd.gemMu.Unlock()
@@ -1134,6 +1151,12 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 				fd.gemMu.Unlock()
 				return 0, linuxerr.EINVAL
 			}
+		}
+		if i == batchIndex && (batchOffset > objectSize ||
+			(batchLength != 0 && batchLength > objectSize-batchOffset) ||
+			(batchLength == 0 && batchOffset >= objectSize)) {
+			fd.gemMu.Unlock()
+			return 0, linuxerr.EINVAL
 		}
 	}
 	n, err := hostIoctlI915Execbuffer2(fd.hostFD, cmd, params, objects, relocations, nil)
