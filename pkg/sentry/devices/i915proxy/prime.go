@@ -53,11 +53,6 @@ type i915DMABufFD struct {
 	size uint64
 }
 
-// HostFD implements vfs.HostFDProvider.HostFD.
-func (fd *i915DMABufFD) HostFD() int {
-	return int(fd.hostFD)
-}
-
 // Release implements vfs.FileDescriptionImpl.Release.
 func (fd *i915DMABufFD) Release(context.Context) {
 	fd.dev.removeDMABufFD(fd)
