@@ -81,10 +81,14 @@ type renderMemmapFile struct {
 	fd int32 `state:"nosave"`
 	fdValid bool `state:"nosave"`
 
-	// mu protects the host mappings and mmap offset types.
-	mu sync.Mutex `state:"nosave"`
+	// +checklocks:mu
+	pageRefs map[uint64]int64 `state:"nosave"`
+	// +checklocks:mu
 	pages map[uint64][]byte `state:"nosave"`
-	offsetTypes map[uint64]hostarch.MemoryType `state:"nosave"`
+	// +checklocks:mu
+	offsetTypes map[uint64]mmapOffsetInfo `state:"nosave"`
+	// mu protects pageRefs, pages, and offsetTypes.
+	mu sync.Mutex `state:"nosave"`
 }
 
 // SetFD implements fsutil.MmapFile.SetFD.
@@ -96,12 +100,42 @@ func (mf *renderMemmapFile) SetFD(fd int) {
 // IncRef implements memmap.File.IncRef.
 func (mf *renderMemmapFile) IncRef(fr memmap.FileRange, memCgID uint32) {
 	mf.MmapFileRefs.IncRef(fr, memCgID)
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	if mf.pageRefs == nil {
+		mf.pageRefs = make(map[uint64]int64)
+	}
+	pageSize := uint64(hostarch.PageSize)
+	for off := fr.Start; off < fr.End; off += pageSize {
+		mf.pageRefs[off]++
+	}
 }
 
 // DecRef implements memmap.File.DecRef.
 func (mf *renderMemmapFile) DecRef(fr memmap.FileRange) {
-	// Keep host mappings cached until the file description and all mappings
-	// are released. MapInternal limits the total number of cached pages.
+	mf.mu.Lock()
+	pageSize := uint64(hostarch.PageSize)
+	for off := fr.Start; off < fr.End; off += pageSize {
+		refs := mf.pageRefs[off]
+		if refs <= 0 {
+			mf.mu.Unlock()
+			panic(fmt.Sprintf("i915proxy: mapping reference underflow at %#x", off))
+		}
+		if refs > 1 {
+			mf.pageRefs[off] = refs - 1
+			continue
+		}
+		delete(mf.pageRefs, off)
+		if page, ok := mf.pages[off]; ok {
+			if err := unix.Munmap(page); err != nil {
+				// Close() reports any remaining mappings. A failed unmap is
+				// still removed from the cache to avoid stale pointer reuse.
+				_ = err
+			}
+			delete(mf.pages, off)
+		}
+	}
+	mf.mu.Unlock()
 	mf.MmapFileRefs.DecRef(fr)
 }
 
@@ -134,23 +168,30 @@ func (mf *renderMemmapFile) MemoryType() hostarch.MemoryType {
 	return hostarch.MemoryTypeWriteBack
 }
 
-// recordOffset records the cache type associated with a host-generated mmap offset.
-func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.MemoryType) error {
+type mmapOffsetInfo struct {
+	memoryType hostarch.MemoryType
+	length uint64
+}
+
+// recordOffset records the cache type and object size associated with a
+// host-generated mmap offset.
+func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.MemoryType, length uint64) error {
 	if offset > math.MaxInt64 {
 		return linuxerr.EOVERFLOW
 	}
-	if offset%uint64(hostarch.PageSize) != 0 {
+	if offset%uint64(hostarch.PageSize) != 0 || length == 0 || length > math.MaxInt64-offset {
 		return linuxerr.EINVAL
 	}
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	if mf.offsetTypes == nil {
-		mf.offsetTypes = make(map[uint64]hostarch.MemoryType)
+		mf.offsetTypes = make(map[uint64]mmapOffsetInfo)
 	}
-	if existing, ok := mf.offsetTypes[offset]; ok && existing != memoryType {
-		return fmt.Errorf("i915proxy: host reused mmap offset %#x with conflicting cache types", offset)
+	info := mmapOffsetInfo{memoryType: memoryType, length: length}
+	if existing, ok := mf.offsetTypes[offset]; ok && existing != info {
+		return fmt.Errorf("i915proxy: host reused mmap offset %#x with different object metadata", offset)
 	}
-	mf.offsetTypes[offset] = memoryType
+	mf.offsetTypes[offset] = info
 	return nil
 }
 
@@ -165,22 +206,22 @@ func (mf *renderMemmapFile) memoryTypeForRange(offset, length uint64) (hostarch.
 	mf.mu.Lock()
 	defer mf.mu.Unlock()
 	var base uint64
-	var memoryType hostarch.MemoryType
+	var info mmapOffsetInfo
 	found := false
-	for candidate, candidateType := range mf.offsetTypes {
+	for candidate, candidateInfo := range mf.offsetTypes {
 		if candidate <= offset && (!found || candidate > base) {
 			base = candidate
-			memoryType = candidateType
+			info = candidateInfo
 			found = true
 		}
 		if candidate > offset && candidate < end {
 			return hostarch.MemoryTypeWriteBack, linuxerr.EINVAL
 		}
 	}
-	if !found {
+	if !found || offset < base || end > base+info.length {
 		return hostarch.MemoryTypeWriteBack, linuxerr.EINVAL
 	}
-	return memoryType, nil
+	return info.memoryType, nil
 }
 
 // Close implements io.Closer.Close for MmapFileRefs.
