@@ -151,13 +151,14 @@ func (mf *renderMemmapFile) MemoryType() hostarch.MemoryType {
 }
 
 type mmapOffsetInfo struct {
+	handle uint32
 	memoryType hostarch.MemoryType
 	length uint64
 }
 
 // recordOffset records the cache type and object size associated with a
 // host-generated mmap offset.
-func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.MemoryType, length uint64) error {
+func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.MemoryType, length uint64, handle uint32) error {
 	if offset > math.MaxInt64 {
 		return linuxerr.EOVERFLOW
 	}
@@ -169,7 +170,10 @@ func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.Memo
 	if mf.offsetTypes == nil {
 		mf.offsetTypes = make(map[uint64]mmapOffsetInfo)
 	}
-	info := mmapOffsetInfo{memoryType: memoryType, length: length}
+	if len(mf.offsetTypes) >= maxTrackedMmapOffsets {
+		return linuxerr.ENOMEM
+	}
+	info := mmapOffsetInfo{handle: handle, memoryType: memoryType, length: length}
 	if existing, ok := mf.offsetTypes[offset]; ok && existing != info {
 		return fmt.Errorf("i915proxy: host reused mmap offset %#x with different object metadata", offset)
 	}
@@ -177,12 +181,11 @@ func (mf *renderMemmapFile) recordOffset(offset uint64, memoryType hostarch.Memo
 	return nil
 }
 
-// memoryTypeForRange returns the cache type for an mmap range. It rejects
-// offsets that were not returned by a supported i915 mmap-offset ioctl and
-// ranges that overlap the next known buffer-object mapping.
-func (mf *renderMemmapFile) memoryTypeForRange(offset, length uint64) (hostarch.MemoryType, error) {
+// lookupOffset validates an mmap range against an offset returned for a
+// tracked GEM object.
+func (mf *renderMemmapFile) lookupOffset(offset, length uint64) (uint64, mmapOffsetInfo, error) {
 	if length == 0 || offset > math.MaxInt64 || length > math.MaxInt64-offset {
-		return hostarch.MemoryTypeWriteBack, linuxerr.EINVAL
+		return 0, mmapOffsetInfo{}, linuxerr.EINVAL
 	}
 	end := offset + length
 	mf.mu.Lock()
@@ -197,13 +200,25 @@ func (mf *renderMemmapFile) memoryTypeForRange(offset, length uint64) (hostarch.
 			found = true
 		}
 		if candidate > offset && candidate < end {
-			return hostarch.MemoryTypeWriteBack, linuxerr.EINVAL
+			return 0, mmapOffsetInfo{}, linuxerr.EINVAL
 		}
 	}
-	if !found || offset < base || end > base+info.length {
-		return hostarch.MemoryTypeWriteBack, linuxerr.EINVAL
+	if !found || end > base+info.length {
+		return 0, mmapOffsetInfo{}, linuxerr.EINVAL
 	}
-	return info.memoryType, nil
+	return base, info, nil
+}
+
+// forgetOffsets removes mmap tokens tied to a closed GEM handle. Existing VMAs
+// retain their validated metadata in renderMappable.
+func (mf *renderMemmapFile) forgetOffsets(handle uint32) {
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	for offset, info := range mf.offsetTypes {
+		if info.handle == handle {
+			delete(mf.offsetTypes, offset)
+		}
+	}
 }
 
 // Close implements io.Closer.Close for MmapFileRefs.
