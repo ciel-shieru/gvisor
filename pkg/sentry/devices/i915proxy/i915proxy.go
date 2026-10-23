@@ -518,6 +518,29 @@ func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostar
 	return n, nil
 }
 
+func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch.Addr, copyOut bool) (uintptr, error) {
+	if linux.IOC_SIZE(uint32(cmd)) != 16 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, 16)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint64(params[0:8]) != 0 || binary.LittleEndian.Uint32(params[8:12]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, cmd, params)
+	if err != nil {
+		return n, err
+	}
+	if copyOut {
+		if _, err := task.CopyOutBytes(addr, params); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
 const (
 	maxI915QueryItems = 64
 	maxI915QueryItemBytes = 16 << 20
