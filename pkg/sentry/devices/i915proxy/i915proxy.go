@@ -645,9 +645,12 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	fencePtr := hostarch.Addr(binary.LittleEndian.Uint64(params[32:40]))
 	flags := binary.LittleEndian.Uint64(params[40:48])
 	var fences []byte
-	if flags&i915ExecUseExtensionsFlag != 0 && fencePtr != 0 {
+	if flags&i915ExecUseExtensionsFlag != 0 {
 		// Extension chains contain nested, versioned pointers. They are not
 		// forwarded until each supported extension has an explicit translator.
+		return 0, linuxerr.EINVAL
+	}
+	if binary.LittleEndian.Uint64(params[48:56]) != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
 	if fenceCount != 0 {
