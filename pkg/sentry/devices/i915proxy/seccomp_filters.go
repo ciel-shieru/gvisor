@@ -21,6 +21,9 @@ import (
 
 // Filters returns the host syscall rules needed by the implemented i915 proxy
 // operations. It intentionally does not permit a range of DRM ioctl values.
+// The mmap rule is required for the proxy's internal shared mappings; it is
+// broader than the ioctl allowlist because seccomp cannot identify the object
+// behind a dynamically allocated file descriptor.
 func Filters() seccomp.SyscallRules {
 	return seccomp.MakeSyscallRules(map[uintptr]seccomp.SyscallRule{
 		unix.SYS_IOCTL: seccomp.Or([]seccomp.SyscallRule{
