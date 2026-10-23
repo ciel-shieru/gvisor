@@ -842,18 +842,24 @@ func (fd *renderFD) ioctlGemMmapGTT(task *kernel.Task, addr hostarch.Addr, size 
 	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
-	objectSize, ok := fd.gemObjectSize(binary.LittleEndian.Uint32(params[0:4]))
+	handle := binary.LittleEndian.Uint32(params[0:4])
+	fd.gemMu.Lock()
+	objectSize, ok := fd.gemObjects[handle]
 	if !ok {
+		fd.gemMu.Unlock()
 		return 0, linuxerr.EINVAL
 	}
 	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMmapGTT, params)
 	if err != nil {
+		fd.gemMu.Unlock()
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine, objectSize, binary.LittleEndian.Uint32(params[0:4])); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, hostarch.MemoryTypeWriteCombine, objectSize, handle); err != nil {
+		fd.gemMu.Unlock()
 		return n, err
 	}
+	fd.gemMu.Unlock()
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
 		return n, err
 	}
@@ -868,18 +874,10 @@ func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, si
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	objectSize, ok := fd.gemObjectSize(binary.LittleEndian.Uint32(params[0:4]))
-	if !ok {
-		return 0, linuxerr.EINVAL
-	}
-	// Extensions are user pointers. This implementation supports only the
-	// pointer-free base structure until every extension has a reviewed handler.
 	if binary.LittleEndian.Uint32(params[4:8]) != 0 || binary.LittleEndian.Uint64(params[24:32]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
+	handle := binary.LittleEndian.Uint32(params[0:4])
 	var memoryType hostarch.MemoryType
 	switch binary.LittleEndian.Uint64(params[16:24]) {
 	case 0: // I915_MMAP_OFFSET_GTT
@@ -891,18 +889,25 @@ func (fd *renderFD) ioctlGemMmapOffset(task *kernel.Task, addr hostarch.Addr, si
 	case 3: // I915_MMAP_OFFSET_UC
 		memoryType = hostarch.MemoryTypeUncached
 	default:
-		// In particular, I915_MMAP_OFFSET_FIXED depends on object placement
-		// and cannot be represented safely by one generic cache type.
+		return 0, linuxerr.EINVAL
+	}
+	fd.gemMu.Lock()
+	objectSize, ok := fd.gemObjects[handle]
+	if !ok {
+		fd.gemMu.Unlock()
 		return 0, linuxerr.EINVAL
 	}
 	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMmapOffset, params)
 	if err != nil {
+		fd.gemMu.Unlock()
 		return n, err
 	}
 	offset := binary.LittleEndian.Uint64(params[8:16])
-	if err := fd.memmapFile.recordOffset(offset, memoryType, objectSize, binary.LittleEndian.Uint32(params[0:4])); err != nil {
+	if err := fd.memmapFile.recordOffset(offset, memoryType, objectSize, handle); err != nil {
+		fd.gemMu.Unlock()
 		return n, err
 	}
+	fd.gemMu.Unlock()
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
 		return n, err
 	}
