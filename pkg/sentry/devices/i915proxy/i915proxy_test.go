@@ -56,6 +56,11 @@ func TestValidateDevice(t *testing.T) {
 			dev: Device{Path: "/dev/dri/renderD128x", Major: DRMDeviceMajor, Minor: 128},
 			wantErr: true,
 		},
+		{
+			name: "padded node number rejected",
+			dev: Device{Path: "/dev/dri/renderD0128", Major: DRMDeviceMajor, Minor: 128},
+			wantErr: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateDevice(tc.dev)
