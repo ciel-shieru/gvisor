@@ -717,12 +717,36 @@ func (fd *renderFD) ioctlContextCreate(task *kernel.Task, cmd uintptr, addr host
 	if extended && binary.LittleEndian.Uint64(params[8:16]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
+
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	if len(fd.contexts) >= maxTrackedGEMObjects {
+		return 0, linuxerr.ENOMEM
+	}
 	n, err := hostIoctl(fd.hostFD, cmd, params)
 	if err != nil {
 		return n, err
 	}
+	ctxID := binary.LittleEndian.Uint32(params[0:4])
+	if ctxID == 0 {
+		return n, linuxerr.EIO
+	}
+	if _, exists := fd.contexts[ctxID]; exists {
+		return n, linuxerr.EIO
+	}
+	if fd.contexts == nil {
+		fd.contexts = make(map[uint32]struct{})
+	}
+	fd.contexts[ctxID] = struct{}{}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
-		return n, err
+		closeParams := make([]byte, 8)
+		binary.LittleEndian.PutUint32(closeParams[0:4], ctxID)
+		_, closeErr := hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, closeParams)
+		if closeErr == nil {
+			delete(fd.contexts, ctxID)
+			return n, err
+		}
+		return n, fmt.Errorf("copying context-create result to application failed: %v; destroying unreturned context failed: %w", err, closeErr)
 	}
 	return n, nil
 }
@@ -735,10 +759,21 @@ func (fd *renderFD) ioctlContextDestroy(task *kernel.Task, addr hostarch.Addr, s
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	if binary.LittleEndian.Uint32(params[0:4]) == 0 || binary.LittleEndian.Uint32(params[4:8]) != 0 {
+	ctxID := binary.LittleEndian.Uint32(params[0:4])
+	if ctxID == 0 || binary.LittleEndian.Uint32(params[4:8]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
-	return hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, params)
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	if _, ok := fd.contexts[ctxID]; !ok {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, params)
+	if err != nil {
+		return n, err
+	}
+	delete(fd.contexts, ctxID)
+	return n, nil
 }
 
 const (
