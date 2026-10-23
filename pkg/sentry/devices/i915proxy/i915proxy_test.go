@@ -77,6 +77,18 @@ func TestI915GemCreateCommandNumber(t *testing.T) {
 	}
 }
 
+func TestGEMCreateExtStructureSizes(t *testing.T) {
+	if got := i915GemCreateExtSize; got != 24 {
+		t.Fatalf("GEM_CREATE_EXT structure size = %d, want 24", got)
+	}
+	if got := i915GemCreateExtMemoryRegionsSize; got != 48 {
+		t.Fatalf("GEM_CREATE_EXT_MEMORY_REGIONS structure size = %d, want 48", got)
+	}
+	if got := i915GemMemoryClassInstanceSize; got != 8 {
+		t.Fatalf("GEM memory class/instance structure size = %d, want 8", got)
+	}
+}
+
 func TestIoctlABIEncodings(t *testing.T) {
 	for _, tc := range []struct {
 		name string
