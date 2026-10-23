@@ -793,6 +793,13 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 			fd.gemMu.Unlock()
 			return 0, linuxerr.EINVAL
 		}
+		for offset := 0; offset < len(relocations[i]); offset += i915RelocationEntrySize {
+			targetHandle := binary.LittleEndian.Uint32(relocations[i][offset : offset+4])
+			if _, ok := fd.gemObjects[targetHandle]; !ok {
+				fd.gemMu.Unlock()
+				return 0, linuxerr.EINVAL
+			}
+		}
 	}
 	fd.gemMu.Unlock()
 
