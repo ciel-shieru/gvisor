@@ -194,6 +194,8 @@ type renderDevice struct {
 	mu sync.Mutex `state:"nosave"`
 	// +checklocks:mu
 	openFDs map[*renderFD]struct{} `state:"nosave"`
+	// +checklocks:mu
+	openDMABufFDs map[*i915DMABufFD]struct{} `state:"nosave"`
 }
 
 func (dev *renderDevice) addFD(fd *renderFD) {
@@ -211,10 +213,25 @@ func (dev *renderDevice) removeFD(fd *renderFD) {
 	delete(dev.openFDs, fd)
 }
 
+func (dev *renderDevice) addDMABufFD(fd *i915DMABufFD) {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	if dev.openDMABufFDs == nil {
+		dev.openDMABufFDs = make(map[*i915DMABufFD]struct{})
+	}
+	dev.openDMABufFDs[fd] = struct{}{}
+}
+
+func (dev *renderDevice) removeDMABufFD(fd *i915DMABufFD) {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	delete(dev.openDMABufFDs, fd)
+}
+
 func (dev *renderDevice) hasOpenFDs() bool {
 	dev.mu.Lock()
 	defer dev.mu.Unlock()
-	return len(dev.openFDs) != 0
+	return len(dev.openFDs) != 0 || len(dev.openDMABufFDs) != 0
 }
 
 // AnyDevicesOpen reports whether an assigned i915 render node has an open file
@@ -370,6 +387,8 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlVMControl(task, cmd, args[2].Pointer(), false)
 	case drmIoctlI915GemCreateExt:
 		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 24, 16)
+	case drmIoctlPrimeHandleToFD, drmIoctlPrimeFDToHandle:
+		return fd.ioctlPrime(ctx, task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	default:
 		return 0, linuxerr.ENOTTY
 	}
