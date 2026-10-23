@@ -66,6 +66,12 @@ func TestValidateDevice(t *testing.T) {
 	}
 }
 
+func TestI915GemCreateCommandNumber(t *testing.T) {
+	if got := drmIoctlI915GemCreate; got != uintptr(0xc010645b) {
+		t.Fatalf("DRM_IOCTL_I915_GEM_CREATE = %#x, want %#x", got, uintptr(0xc010645b))
+	}
+}
+
 func TestSupportedIoctl(t *testing.T) {
 	for _, cmd := range []uintptr{
 		drmIoctlVersion,
