@@ -125,6 +125,8 @@ func TestSupportedIoctl(t *testing.T) {
 		drmIoctlI915GemVMCreate,
 		drmIoctlI915GemVMDestroy,
 		drmIoctlI915GemCreateExt,
+		drmIoctlPrimeHandleToFD,
+		drmIoctlPrimeFDToHandle,
 	} {
 		if !SupportedIoctl(cmd) {
 			t.Errorf("SupportedIoctl(%#x) = false, want true", cmd)
