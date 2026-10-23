@@ -163,6 +163,9 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 	if !ok || dmabuf.dev.minor != fd.dev.minor || dmabuf.hostFD < 0 || dmabuf.size == 0 {
 		return 0, linuxerr.EINVAL
 	}
+	if dmabuf.size > maxGEMObjectSize {
+		return 0, linuxerr.E2BIG
+	}
 
 	fd.gemMu.Lock()
 	defer fd.gemMu.Unlock()
@@ -181,7 +184,8 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			return n, fmt.Errorf("i915proxy: imported GEM handle %d has size %d, dma-buf size is %d", handle, existingSize, dmabuf.size)
 		}
 	} else {
-		if len(fd.gemObjects) >= maxTrackedGEMObjects {
+		if len(fd.gemObjects) >= maxTrackedGEMObjects ||
+			fd.gemBytes > maxGEMBytesPerFD || dmabuf.size > maxGEMBytesPerFD-fd.gemBytes {
 			closeParams := make([]byte, 8)
 			binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 			_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
@@ -194,6 +198,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			fd.gemObjects = make(map[uint32]uint64)
 		}
 		fd.gemObjects[handle] = dmabuf.size
+		fd.gemBytes += dmabuf.size
 	}
 	// Restore the sandbox FD number; host FD numbers never escape the proxy.
 	binary.LittleEndian.PutUint32(params[8:12], uint32(sandboxFD))
@@ -204,6 +209,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
 			if closeErr == nil {
 				delete(fd.gemObjects, handle)
+				fd.gemBytes -= dmabuf.size
 				fd.memmapFile.forgetOffsets(handle)
 			} else {
 				return n, fmt.Errorf("copying PRIME import result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
