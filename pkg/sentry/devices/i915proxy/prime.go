@@ -186,6 +186,15 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			return n, fmt.Errorf("i915proxy: imported GEM handle %d has size %d, dma-buf size is %d", handle, existingSize, dmabuf.size)
 		}
 	} else {
+		if len(fd.gemObjects) >= maxTrackedGEMObjects {
+			closeParams := make([]byte, 8)
+			binary.LittleEndian.PutUint32(closeParams[0:4], handle)
+			_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
+			if closeErr != nil {
+				return n, fmt.Errorf("GEM tracking limit reached and closing imported handle failed: %w", closeErr)
+			}
+			return n, linuxerr.ENOMEM
+		}
 		fd.gemObjects[handle] = dmabuf.size
 	}
 	// Restore the sandbox FD number; host FD numbers never escape the proxy.
