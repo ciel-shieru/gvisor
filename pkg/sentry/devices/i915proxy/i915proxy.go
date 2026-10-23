@@ -220,6 +220,9 @@ func (dev *renderDevice) hasOpenFDs() bool {
 // AnyDevicesOpen reports whether an assigned i915 render node has an open file
 // description. Live i915 state cannot be checkpointed or restored safely.
 func AnyDevicesOpen(vfsObj *vfs.VirtualFilesystem) bool {
+	if vfsObj == nil {
+		return false
+	}
 	type deviceID struct {
 		kind vfs.DeviceKind
 		major uint32
