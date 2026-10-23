@@ -661,7 +661,7 @@ const (
 	i915MemoryClassSystem = uint16(0)
 	i915MemorySystemInstance = uint16(0)
 	i915GemCreateExtSize = 24
-	i915GemCreateExtMemoryRegionsSize = 32
+	i915GemCreateExtMemoryRegionsSize = 48
 	i915GemMemoryClassInstanceSize = 8
 )
 
@@ -707,11 +707,13 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 			if binary.LittleEndian.Uint64(extension[0:8]) != 0 ||
 				binary.LittleEndian.Uint32(extension[8:12]) != i915GemCreateExtMemoryRegions ||
 				binary.LittleEndian.Uint32(extension[12:16]) != 0 ||
-				binary.LittleEndian.Uint32(extension[16:20]) != 0 ||
-				binary.LittleEndian.Uint32(extension[20:24]) != 1 {
+				binary.LittleEndian.Uint64(extension[16:24]) != 0 ||
+				binary.LittleEndian.Uint64(extension[24:32]) != 0 ||
+				binary.LittleEndian.Uint32(extension[32:36]) != 0 ||
+				binary.LittleEndian.Uint32(extension[36:40]) != 1 {
 				return 0, linuxerr.EINVAL
 			}
-			regionsAddr := hostarch.Addr(binary.LittleEndian.Uint64(extension[24:32]))
+			regionsAddr := hostarch.Addr(binary.LittleEndian.Uint64(extension[40:48]))
 			if regionsAddr == 0 {
 				return 0, linuxerr.EFAULT
 			}
