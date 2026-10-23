@@ -340,7 +340,7 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlVersion:
 		return fd.ioctlVersion(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlGetCap:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), drmGetCapSize, true)
+		return fd.ioctlGetCap(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlSetClientCap:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), drmSetClientCapSize, false)
 	case drmIoctlGetMagic:
@@ -419,6 +419,42 @@ func (fd *renderFD) ioctlGEMHandleFixed(task *kernel.Task, cmd uintptr, addr hos
 		}
 	}
 	return n, nil
+}
+
+const (
+	drmCapPrime = 0x5
+	drmCapSyncobj = 0x13
+	drmCapSyncobjTimeline = 0x14
+
+	drmPrimeCapImport = 1
+	drmPrimeCapExport = 2
+)
+
+// ioctlGetCap reports only capabilities that the proxy can provide safely.
+// In particular, syncobj support is hidden until its handles and fence FDs
+// have explicit translation support.
+func (fd *renderFD) ioctlGetCap(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != drmGetCapSize {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	switch binary.LittleEndian.Uint64(params[0:8]) {
+	case drmCapPrime:
+		binary.LittleEndian.PutUint64(params[8:16], drmPrimeCapImport|drmPrimeCapExport)
+	case drmCapSyncobj, drmCapSyncobjTimeline:
+		binary.LittleEndian.PutUint64(params[8:16], 0)
+	default:
+		if _, err := hostIoctl(fd.hostFD, drmIoctlGetCap, params); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
 func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, copyOut bool) (uintptr, error) {
