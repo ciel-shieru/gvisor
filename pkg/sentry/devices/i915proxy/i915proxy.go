@@ -329,6 +329,9 @@ type renderFD struct {
 	gemObjects map[uint32]uint64 `state:"nosave"`
 	// +checklocks:gemMu
 	gemBytes uint64 `state:"nosave"`
+	// unusable is set if the proxy cannot clean up an unreturned host object.
+	// +checklocks:gemMu
+	unusable bool `state:"nosave"`
 	// +checklocks:gemMu
 	contexts map[uint32]struct{} `state:"nosave"`
 	// +checklocks:gemMu
@@ -344,6 +347,12 @@ func (fd *renderFD) Release(context.Context) {
 
 // Ioctl implements vfs.FileDescriptionImpl.Ioctl.
 func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arch.SyscallArguments) (uintptr, error) {
+	fd.gemMu.Lock()
+	unusable := fd.unusable
+	fd.gemMu.Unlock()
+	if unusable {
+		return 0, linuxerr.EIO
+	}
 	cmd := uintptr(args[1].Uint())
 	task := kernel.TaskFromContext(ctx)
 	if task == nil {
@@ -720,7 +729,8 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 
 	fd.gemMu.Lock()
 	defer fd.gemMu.Unlock()
-	if len(fd.gemObjects) >= maxTrackedGEMObjects || requestedSize > maxGEMBytesPerFD-fd.gemBytes {
+	if len(fd.gemObjects) >= maxTrackedGEMObjects || fd.gemBytes > maxGEMBytesPerFD ||
+		requestedSize > maxGEMBytesPerFD-fd.gemBytes {
 		return 0, linuxerr.ENOMEM
 	}
 	var n uintptr
