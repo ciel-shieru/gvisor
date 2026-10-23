@@ -30,6 +30,7 @@ import (
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/devutil"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/sentry/devices/i915proxy"
 	"gvisor.dev/gvisor/pkg/sentry/devices/nvproxy"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/dev"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
@@ -50,6 +51,9 @@ const (
 // number of GPUs or more, so only do this if at least one GPU device file is
 // open, which is indicative of GPU usage.
 func (l *Loader) setNvproxyDeviceRemapMetadata(saveOpts *state.SaveOpts) error {
+	if i915proxy.AnyDevicesOpen(l.k.VFS()) {
+		return fmt.Errorf("checkpoint is not supported while an i915 render-node file is open")
+	}
 	if !nvproxy.AnyFrontendDevicesOpen(l.k.VFS()) {
 		return nil
 	}
