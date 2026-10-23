@@ -400,10 +400,8 @@ func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Add
 const (
 	maxExecBufferObjects = 16384
 	maxExecBufferRelocations = 65536
-	maxExecBufferFences = 4096
 	i915ExecObject2Size = 56
 	i915RelocationEntrySize = 32
-	i915ExecFenceSize = 8
 	i915ExecFenceArrayFlag = uint64(1 << 19)
 	i915ExecUseExtensionsFlag = uint64(1 << 21)
 	i915ExecFenceInFlag = uint64(1 << 16)
@@ -414,20 +412,6 @@ const (
 )
 
 const maxTrackedGEMObjects = 1 << 16
-
-func (fd *renderFD) gemObjectSize(handle uint32) (uint64, bool) {
-	fd.gemMu.Lock()
-	defer fd.gemMu.Unlock()
-	size, ok := fd.gemObjects[handle]
-	return size, ok
-}
-
-func (fd *renderFD) forgetGEMObject(handle uint32) {
-	fd.gemMu.Lock()
-	delete(fd.gemObjects, handle)
-	fd.gemMu.Unlock()
-	fd.memmapFile.forgetOffsets(handle)
-}
 
 func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
 	if size != 8 {
@@ -546,29 +530,6 @@ func (fd *renderFD) ioctlContextDestroy(task *kernel.Task, addr hostarch.Addr, s
 		return 0, linuxerr.EINVAL
 	}
 	return hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, params)
-}
-
-func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int, copyOut bool) (uintptr, error) {
-	if linux.IOC_SIZE(uint32(cmd)) != size || extensionOffset < 0 || extensionOffset+8 > int(size) {
-		return 0, linuxerr.EINVAL
-	}
-	params := make([]byte, size)
-	if _, err := task.CopyInBytes(addr, params); err != nil {
-		return 0, err
-	}
-	if binary.LittleEndian.Uint64(params[extensionOffset:extensionOffset+8]) != 0 {
-		return 0, linuxerr.EINVAL
-	}
-	n, err := hostIoctl(fd.hostFD, cmd, params)
-	if err != nil {
-		return n, err
-	}
-	if copyOut {
-		if _, err := task.CopyOutBytes(addr, params); err != nil {
-			return n, err
-		}
-	}
-	return n, nil
 }
 
 func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch.Addr, create bool) (uintptr, error) {
