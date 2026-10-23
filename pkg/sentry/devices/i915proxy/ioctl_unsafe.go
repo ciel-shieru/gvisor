@@ -120,6 +120,29 @@ func hostIoctlI915Query(fd int32, cmd uintptr, params, items []byte, buffers [][
 	return n, nil
 }
 
+// hostIoctlI915GemTransfer translates the data_ptr field in GEM_PREAD/PWRITE
+// to a Sentry-owned buffer and restores the original pointer afterward.
+func hostIoctlI915GemTransfer(fd int32, cmd uintptr, params, data []byte) (uintptr, error) {
+	if len(params) != 32 {
+		return 0, unix.EINVAL
+	}
+	var original [8]byte
+	copy(original[:], params[24:32])
+	if len(data) == 0 {
+		binary.LittleEndian.PutUint64(params[24:32], 0)
+	} else {
+		binary.LittleEndian.PutUint64(params[24:32], uint64(uintptr(unsafe.Pointer(&data[0]))))
+	}
+	defer copy(params[24:32], original[:])
+	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	runtime.KeepAlive(params)
+	runtime.KeepAlive(data)
+	if errno != 0 {
+		return n, errno
+	}
+	return n, nil
+}
+
 // hostIoctlI915GetParam translates drm_i915_getparam.value to a Sentry-owned
 // integer buffer. The pointer in the ioctl structure never refers to application
 // memory while the host kernel is handling the request.
