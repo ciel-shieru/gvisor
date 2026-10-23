@@ -181,6 +181,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 	_, alreadyTracked := fd.gemObjects[handle]
 	if existingSize, exists := fd.gemObjects[handle]; exists {
 		if existingSize != dmabuf.size {
+			fd.unusable = true
 			return n, fmt.Errorf("i915proxy: imported GEM handle %d has size %d, dma-buf size is %d", handle, existingSize, dmabuf.size)
 		}
 	} else {
@@ -190,6 +191,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			binary.LittleEndian.PutUint32(closeParams[0:4], handle)
 			_, closeErr := hostIoctl(fd.hostFD, drmIoctlGemClose, closeParams)
 			if closeErr != nil {
+				fd.unusable = true
 				return n, fmt.Errorf("GEM tracking limit reached and closing imported handle failed: %w", closeErr)
 			}
 			return n, linuxerr.ENOMEM
@@ -212,6 +214,7 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 				fd.gemBytes -= dmabuf.size
 				fd.memmapFile.forgetOffsets(handle)
 			} else {
+				fd.unusable = true
 				return n, fmt.Errorf("copying PRIME import result to application failed: %v; closing unreturned GEM handle failed: %w", err, closeErr)
 			}
 		}
