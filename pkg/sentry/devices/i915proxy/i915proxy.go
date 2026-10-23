@@ -443,7 +443,12 @@ func (fd *renderFD) ioctlGetCap(task *kernel.Task, addr hostarch.Addr, size uint
 	}
 	switch binary.LittleEndian.Uint64(params[0:8]) {
 	case drmCapPrime:
-		binary.LittleEndian.PutUint64(params[8:16], drmPrimeCapImport|drmPrimeCapExport)
+		if _, err := hostIoctl(fd.hostFD, drmIoctlGetCap, params); err != nil {
+			return 0, err
+		}
+		value := binary.LittleEndian.Uint64(params[8:16])
+		value &= drmPrimeCapImport | drmPrimeCapExport
+		binary.LittleEndian.PutUint64(params[8:16], value)
 	case drmCapSyncobj, drmCapSyncobjTimeline:
 		binary.LittleEndian.PutUint64(params[8:16], 0)
 	default:
