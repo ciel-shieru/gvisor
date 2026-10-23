@@ -349,11 +349,11 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemWait:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
 	case drmIoctlI915GemContextCreate:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+		return fd.ioctlContextCreate(task, cmd, args[2].Pointer(), false)
 	case drmIoctlI915GemContextCreateExt:
-		return fd.ioctlNoExtension(task, cmd, args[2].Pointer(), 16, 8, true)
+		return fd.ioctlContextCreate(task, cmd, args[2].Pointer(), true)
 	case drmIoctlI915GemContextDestroy:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+		return fd.ioctlContextDestroy(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemSetCaching:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
 	case drmIoctlI915GemGetCaching:
@@ -499,6 +499,48 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		return n, err
 	}
 	return n, nil
+}
+
+func (fd *renderFD) ioctlContextCreate(task *kernel.Task, cmd uintptr, addr hostarch.Addr, extended bool) (uintptr, error) {
+	size := uint32(8)
+	if extended {
+		size = 16
+	}
+	if linux.IOC_SIZE(uint32(cmd)) != size {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint32(params[0:4]) != 0 || binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	if extended && binary.LittleEndian.Uint64(params[8:16]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, cmd, params)
+	if err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+func (fd *renderFD) ioctlContextDestroy(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 8 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint32(params[0:4]) == 0 || binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	return hostIoctl(fd.hostFD, drmIoctlI915GemContextDestroy, params)
 }
 
 func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, extensionOffset int, copyOut bool) (uintptr, error) {
