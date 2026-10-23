@@ -639,7 +639,6 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 }
 
 const (
-	i915GemCreateExtFlagNeedsCPUAccess = uint32(1 << 0)
 	i915GemCreateExtMemoryRegions = uint32(0)
 	i915MemoryClassSystem = uint16(0)
 	i915MemorySystemInstance = uint16(0)
@@ -675,7 +674,10 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 		}
 	} else {
 		flags := binary.LittleEndian.Uint32(params[12:16])
-		if flags &^ i915GemCreateExtFlagNeedsCPUAccess != 0 || extensionOffset != 16 {
+		// The accepted extension only allocates system memory. The
+		// NEEDS_CPU_ACCESS flag applies to device-local placements and is
+		// deliberately rejected for this iGPU-only subset.
+		if flags != 0 || extensionOffset != 16 {
 			return 0, linuxerr.EINVAL
 		}
 		extensionAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[16:24]))
