@@ -61,7 +61,7 @@ const (
 	drmIoctlSetClientCap = uintptr(linux.IOW('d', 0x0d, drmSetClientCapSize))
 	drmIoctlGemClose = uintptr(linux.IOW('d', 0x09, 8))
 	drmIoctlI915GetParam = uintptr(linux.IOWR('d', 0x46, 16))
-	drmIoctlI915GemCreate = uintptr(linux.IOWR('d', 0x67, 16))
+	drmIoctlI915GemCreate = uintptr(linux.IOWR('d', 0x5b, 16))
 	drmIoctlI915GemBusy = uintptr(linux.IOWR('d', 0x57, 8))
 	drmIoctlI915GemSetDomain = uintptr(linux.IOW('d', 0x5f, 12))
 	drmIoctlI915GemSetTiling = uintptr(linux.IOWR('d', 0x61, 16))
@@ -390,8 +390,11 @@ func (fd *renderFD) ioctlQuery(task *kernel.Task, addr hostarch.Addr, size uint3
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	itemCount := binary.LittleEndian.Uint32(params[0:4])
-	itemsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[8:16]))
+	itemsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
+	itemCount := binary.LittleEndian.Uint32(params[8:12])
+	if binary.LittleEndian.Uint32(params[12:16]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
 	if itemCount == 0 || itemCount > maxI915QueryItems || itemsAddr == 0 {
 		return 0, linuxerr.EINVAL
 	}
