@@ -76,23 +76,22 @@ type renderMemmapFile struct {
 	memmap.NoBufferedIOFallback
 	fsutil.MmapFileRefs
 
-	// fd is the host DRM render-node file descriptor. It remains open until
-	// the last mapping reference is released.
-	fd int32 `state:"nosave"`
-	fdValid bool `state:"nosave"`
-
+	// mu protects fd, fdValid, pages, and offsetTypes.
+	mu sync.Mutex `state:"nosave"`
 	// +checklocks:mu
-	pageRefs map[uint64]int64 `state:"nosave"`
+	fd int32 `state:"nosave"`
+	// +checklocks:mu
+	fdValid bool `state:"nosave"`
 	// +checklocks:mu
 	pages map[uint64][]byte `state:"nosave"`
 	// +checklocks:mu
 	offsetTypes map[uint64]mmapOffsetInfo `state:"nosave"`
-	// mu protects pageRefs, pages, and offsetTypes.
-	mu sync.Mutex `state:"nosave"`
 }
 
 // SetFD implements fsutil.MmapFile.SetFD.
 func (mf *renderMemmapFile) SetFD(fd int) {
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
 	mf.fd = int32(fd)
 	mf.fdValid = true
 }
@@ -100,42 +99,12 @@ func (mf *renderMemmapFile) SetFD(fd int) {
 // IncRef implements memmap.File.IncRef.
 func (mf *renderMemmapFile) IncRef(fr memmap.FileRange, memCgID uint32) {
 	mf.MmapFileRefs.IncRef(fr, memCgID)
-	mf.mu.Lock()
-	defer mf.mu.Unlock()
-	if mf.pageRefs == nil {
-		mf.pageRefs = make(map[uint64]int64)
-	}
-	pageSize := uint64(hostarch.PageSize)
-	for off := fr.Start; off < fr.End; off += pageSize {
-		mf.pageRefs[off]++
-	}
 }
 
 // DecRef implements memmap.File.DecRef.
 func (mf *renderMemmapFile) DecRef(fr memmap.FileRange) {
-	mf.mu.Lock()
-	pageSize := uint64(hostarch.PageSize)
-	for off := fr.Start; off < fr.End; off += pageSize {
-		refs := mf.pageRefs[off]
-		if refs <= 0 {
-			mf.mu.Unlock()
-			panic(fmt.Sprintf("i915proxy: mapping reference underflow at %#x", off))
-		}
-		if refs > 1 {
-			mf.pageRefs[off] = refs - 1
-			continue
-		}
-		delete(mf.pageRefs, off)
-		if page, ok := mf.pages[off]; ok {
-			if err := unix.Munmap(page); err != nil {
-				// Close() reports any remaining mappings. A failed unmap is
-				// still removed from the cache to avoid stale pointer reuse.
-				_ = err
-			}
-			delete(mf.pages, off)
-		}
-	}
-	mf.mu.Unlock()
+	// Internal mappings remain cached until Close. This avoids unmapping a page
+	// while another userspace mapping or Sentry operation may still use it.
 	mf.MmapFileRefs.DecRef(fr)
 }
 
