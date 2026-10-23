@@ -333,11 +333,11 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemCreate:
 		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 16, 0)
 	case drmIoctlI915GemBusy:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 8, true)
 	case drmIoctlI915GemSetDomain:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 12, false)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 12, false)
 	case drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 16, true)
 	case drmIoctlI915GemMmapGTT:
 		return fd.ioctlGemMmapGTT(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemMmapOffset:
@@ -347,7 +347,7 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemExecbuffer2, drmIoctlI915GemExecbuffer2WR:
 		return fd.ioctlExecbuffer2(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemWait:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 16, true)
 	case drmIoctlI915GemContextCreate:
 		return fd.ioctlContextCreate(task, cmd, args[2].Pointer(), false)
 	case drmIoctlI915GemContextCreateExt:
@@ -355,9 +355,9 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	case drmIoctlI915GemContextDestroy:
 		return fd.ioctlContextDestroy(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemSetCaching:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, false)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 8, false)
 	case drmIoctlI915GemGetCaching:
-		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 8, true)
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 8, true)
 	case drmIoctlI915GetResetStats:
 		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 20, true)
 	case drmIoctlI915GemContextGetParam, drmIoctlI915GemContextSetParam:
@@ -373,6 +373,33 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	default:
 		return 0, linuxerr.ENOTTY
 	}
+}
+
+func (fd *renderFD) ioctlGEMHandleFixed(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, copyOut bool) (uintptr, error) {
+	if linux.IOC_SIZE(uint32(cmd)) != size || size < 4 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	handle := binary.LittleEndian.Uint32(params[0:4])
+	fd.gemMu.Lock()
+	if _, ok := fd.gemObjects[handle]; !ok {
+		fd.gemMu.Unlock()
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, cmd, params)
+	fd.gemMu.Unlock()
+	if err != nil {
+		return n, err
+	}
+	if copyOut {
+		if _, err := task.CopyOutBytes(addr, params); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 func (fd *renderFD) ioctlFixed(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, copyOut bool) (uintptr, error) {
