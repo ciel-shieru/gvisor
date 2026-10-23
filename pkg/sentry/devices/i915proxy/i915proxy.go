@@ -928,10 +928,19 @@ func (fd *renderFD) ioctlResetStats(task *kernel.Task, addr hostarch.Addr, size 
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
+	ctxID := binary.LittleEndian.Uint32(params[0:4])
 	if binary.LittleEndian.Uint32(params[4:8]) != 0 || binary.LittleEndian.Uint32(params[20:24]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
+	fd.gemMu.Lock()
+	if ctxID != 0 {
+		if _, ok := fd.contexts[ctxID]; !ok {
+			fd.gemMu.Unlock()
+			return 0, linuxerr.EINVAL
+		}
+	}
 	n, err := hostIoctl(fd.hostFD, drmIoctlI915GetResetStats, params)
+	fd.gemMu.Unlock()
 	if err != nil {
 		return n, err
 	}
