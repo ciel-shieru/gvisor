@@ -441,14 +441,19 @@ func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size ui
 		return 0, linuxerr.EINVAL
 	}
 	handle := binary.LittleEndian.Uint32(params[0:4])
-	if _, ok := fd.gemObjectSize(handle); !ok {
+	fd.gemMu.Lock()
+	if _, ok := fd.gemObjects[handle]; !ok {
+		fd.gemMu.Unlock()
 		return 0, linuxerr.EINVAL
 	}
 	n, err := hostIoctl(fd.hostFD, drmIoctlGemClose, params)
 	if err != nil {
+		fd.gemMu.Unlock()
 		return n, err
 	}
-	fd.forgetGEMObject(handle)
+	delete(fd.gemObjects, handle)
+	fd.gemMu.Unlock()
+	fd.memmapFile.forgetOffsets(handle)
 	return n, nil
 }
 
