@@ -65,7 +65,7 @@ func (mf *renderMemmapFile) MapInternal(fr memmap.FileRange, at hostarch.AccessT
 	if uint64(len(mf.pages))+newPages > maxInternalMapPages {
 		return safemem.BlockSeq{}, linuxerr.E2BIG
 	}
-	prot := at.Prot()
+	prot := unix.PROT_READ | unix.PROT_WRITE
 	for off := start; off < end; off += pageSize {
 		page, ok := mf.pages[off]
 		if !ok {
