@@ -521,8 +521,7 @@ const (
 	i915QueryEngineInfo = 2
 	i915QueryMemoryRegions = 4
 	i915QueryHWConfigTable = 5
-	i915QueryGeometrySubSlices = 6
-	i915QueryComputeSubSlices = 7
+	i915QueryGuCSubmissionVersion = 7
 )
 
 func (fd *renderFD) ioctlQuery(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
@@ -533,11 +532,11 @@ func (fd *renderFD) ioctlQuery(task *kernel.Task, addr hostarch.Addr, size uint3
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	itemsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[0:8]))
-	itemCount := binary.LittleEndian.Uint32(params[8:12])
-	if binary.LittleEndian.Uint32(params[12:16]) != 0 {
+	itemCount := binary.LittleEndian.Uint32(params[0:4])
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
+	itemsAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[8:16]))
 	if itemCount == 0 || itemCount > maxI915QueryItems || itemsAddr == 0 {
 		return 0, linuxerr.EINVAL
 	}
@@ -553,7 +552,7 @@ func (fd *renderFD) ioctlQuery(task *kernel.Task, addr hostarch.Addr, size uint3
 		queryID := binary.LittleEndian.Uint64(items[base : base+8])
 		switch queryID {
 		case i915QueryTopologyInfo, i915QueryEngineInfo, i915QueryMemoryRegions,
-			i915QueryHWConfigTable, i915QueryGeometrySubSlices, i915QueryComputeSubSlices:
+			i915QueryHWConfigTable, i915QueryGuCSubmissionVersion:
 		default:
 			return 0, linuxerr.EINVAL
 		}
