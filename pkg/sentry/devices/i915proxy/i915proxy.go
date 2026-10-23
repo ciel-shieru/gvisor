@@ -399,6 +399,9 @@ const (
 	i915ExecFenceSize = 8
 	i915ExecFenceArrayFlag = uint64(1 << 19)
 	i915ExecUseExtensionsFlag = uint64(1 << 21)
+	i915ExecFenceInFlag = uint64(1 << 16)
+	i915ExecFenceOutFlag = uint64(1 << 17)
+	i915ExecFenceSubmitFlag = uint64(1 << 20)
 )
 
 const maxTrackedGEMObjects = 1 << 16
@@ -650,7 +653,14 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 		// forwarded until each supported extension has an explicit translator.
 		return 0, linuxerr.EINVAL
 	}
-	if binary.LittleEndian.Uint64(params[48:56]) != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
+	if flags&(i915ExecFenceInFlag|i915ExecFenceOutFlag|i915ExecFenceSubmitFlag) != 0 {
+		// These legacy paths carry host sync-file FDs in rsvd2. They must be
+		// translated through the guest FD table before they can be forwarded.
+		return 0, linuxerr.EINVAL
+	}
+	// rsvd1 carries the 32-bit context ID. rsvd2 is only used by the rejected
+	// sync-file paths above and must remain zero.
+	if binary.LittleEndian.Uint64(params[48:56])>>32 != 0 || binary.LittleEndian.Uint64(params[56:64]) != 0 {
 		return 0, linuxerr.EINVAL
 	}
 	if fenceCount != 0 {
