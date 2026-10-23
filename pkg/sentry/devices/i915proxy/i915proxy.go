@@ -192,7 +192,8 @@ type renderDevice struct {
 	useDevGofer bool
 
 	mu sync.Mutex `state:"nosave"`
-	openFDs map[*renderFD]struct{}
+	// +checklocks:mu
+	openFDs map[*renderFD]struct{} `state:"nosave"`
 }
 
 func (dev *renderDevice) addFD(fd *renderFD) {
