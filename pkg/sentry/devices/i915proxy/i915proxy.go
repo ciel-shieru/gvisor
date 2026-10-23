@@ -524,7 +524,7 @@ func (fd *renderFD) ioctlNoExtension(task *kernel.Task, cmd uintptr, addr hostar
 	return n, nil
 }
 
-func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch.Addr, copyOut bool) (uintptr, error) {
+func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch.Addr, create bool) (uintptr, error) {
 	if linux.IOC_SIZE(uint32(cmd)) != 16 {
 		return 0, linuxerr.EINVAL
 	}
@@ -532,14 +532,17 @@ func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch
 	if _, err := task.CopyInBytes(addr, params); err != nil {
 		return 0, err
 	}
-	if binary.LittleEndian.Uint64(params[0:8]) != 0 || binary.LittleEndian.Uint32(params[8:12]) != 0 {
+	vmID := binary.LittleEndian.Uint32(params[0:4])
+	flags := binary.LittleEndian.Uint32(params[4:8])
+	extensions := binary.LittleEndian.Uint64(params[8:16])
+	if flags != 0 || extensions != 0 || (create && vmID != 0) || (!create && vmID == 0) {
 		return 0, linuxerr.EINVAL
 	}
 	n, err := hostIoctl(fd.hostFD, cmd, params)
 	if err != nil {
 		return n, err
 	}
-	if copyOut {
+	if create {
 		if _, err := task.CopyOutBytes(addr, params); err != nil {
 			return n, err
 		}
