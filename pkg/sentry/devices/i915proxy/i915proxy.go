@@ -1440,6 +1440,9 @@ func (fd *renderFD) ioctlVersion(task *kernel.Task, addr hostarch.Addr, size uin
 }
 
 func openHostDevFile(ctx context.Context, relpath string, useDevGofer bool, openFlags uint32) (int32, error) {
+	// Do not allow guest-supplied create, truncate, path, or status flags to
+	// influence how Sentry opens the host device.
+	openFlags = (openFlags & uint32(unix.O_ACCMODE)) | uint32(unix.O_NOFOLLOW|unix.O_CLOEXEC)
 	if useDevGofer {
 		devClient := devutil.GoferClientFromContext(ctx)
 		if devClient == nil {
@@ -1453,7 +1456,7 @@ func openHostDevFile(ctx context.Context, relpath string, useDevGofer bool, open
 		}
 		return int32(hostFD), nil
 	}
-	hostFD, err := unix.Openat(-1, filepath.Join("/dev", relpath), int(openFlags&unix.O_ACCMODE|uint32(unix.O_NOFOLLOW|unix.O_CLOEXEC)), 0)
+	hostFD, err := unix.Openat(-1, filepath.Join("/dev", relpath), int(openFlags), 0)
 	if err != nil {
 		ctx.Warningf("i915proxy: failed to open host device %s: %v", relpath, err)
 		return -1, err
