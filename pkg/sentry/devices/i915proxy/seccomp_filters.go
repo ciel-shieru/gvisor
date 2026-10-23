@@ -57,8 +57,10 @@ func Filters() seccomp.SyscallRules {
 		unix.SYS_MMAP: seccomp.PerArg{
 			seccomp.AnyValue{},
 			seccomp.AnyValue{},
+			seccomp.EqualTo(unix.PROT_READ | unix.PROT_WRITE),
+			seccomp.EqualTo(unix.MAP_SHARED),
+			seccomp.NonNegativeFD{},
 			seccomp.AnyValue{},
-			seccomp.EqualTo(unix.MAP_SHARED | unix.MAP_FIXED_NOREPLACE),
 		},
 		unix.SYS_MREMAP: seccomp.PerArg{
 			seccomp.AnyValue{},
