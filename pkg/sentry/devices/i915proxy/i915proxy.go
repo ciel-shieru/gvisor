@@ -409,6 +409,8 @@ const (
 	i915ExecFenceInFlag = uint64(1 << 16)
 	i915ExecFenceOutFlag = uint64(1 << 17)
 	i915ExecFenceSubmitFlag = uint64(1 << 20)
+	// Bits outside this mask are not passed to the host driver.
+	i915ExecFlagMask = uint64(0x3f | (3 << 6) | (1 << 8) | (1 << 10) | (1 << 11) | (1 << 12) | (3 << 13) | (1 << 15) | (1 << 18))
 )
 
 const maxTrackedGEMObjects = 1 << 16
