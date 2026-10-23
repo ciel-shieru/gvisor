@@ -604,7 +604,11 @@ const (
 	i915ExecFlagMask = uint64(0x3f | (3 << 6) | (1 << 8) | (1 << 10) | (1 << 11) | (1 << 12) | (3 << 13) | (1 << 15) | (1 << 18))
 )
 
-const maxTrackedGEMObjects = 1 << 16
+const (
+	maxTrackedGEMObjects = 1 << 16
+	maxTrackedContexts = 1 << 16
+	maxTrackedVMs = 1 << 16
+)
 
 func (fd *renderFD) ioctlGemClose(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
 	if size != 8 {
@@ -720,7 +724,7 @@ func (fd *renderFD) ioctlContextCreate(task *kernel.Task, cmd uintptr, addr host
 
 	fd.gemMu.Lock()
 	defer fd.gemMu.Unlock()
-	if len(fd.contexts) >= maxTrackedGEMObjects {
+	if len(fd.contexts) >= maxTrackedContexts {
 		return 0, linuxerr.ENOMEM
 	}
 	n, err := hostIoctl(fd.hostFD, cmd, params)
@@ -806,6 +810,7 @@ func (fd *renderFD) ioctlContextParam(task *kernel.Task, cmd uintptr, addr hosta
 	ctxID := binary.LittleEndian.Uint32(params[0:4])
 	valueSize := binary.LittleEndian.Uint32(params[4:8])
 	param := binary.LittleEndian.Uint64(params[8:16])
+	value := binary.LittleEndian.Uint64(params[16:24])
 	switch param {
 	case i915ContextParamBanPeriod, i915ContextParamGTTSize,
 		i915ContextParamNoErrorCapture, i915ContextParamBannable,
@@ -819,14 +824,38 @@ func (fd *renderFD) ioctlContextParam(task *kernel.Task, cmd uintptr, addr hosta
 		return 0, linuxerr.EINVAL
 	}
 	if ctxID == 0 && param != i915ContextParamGTTSize {
-		// The default context cannot meaningfully own explicit per-context
-		// scheduling or VM settings. Let the host handle the supported size
-		// query for GTT_SIZE only.
 		return 0, linuxerr.EINVAL
+	}
+
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	if ctxID != 0 {
+		if _, ok := fd.contexts[ctxID]; !ok {
+			return 0, linuxerr.EINVAL
+		}
+	}
+	if cmd == drmIoctlI915GemContextSetParam && param == i915ContextParamVM && value != 0 {
+		if value > 0xffffffff {
+			return 0, linuxerr.EINVAL
+		}
+		if _, ok := fd.vms[uint32(value)]; !ok {
+			return 0, linuxerr.EINVAL
+		}
 	}
 	returned, err := hostIoctl(fd.hostFD, cmd, params)
 	if err != nil {
 		return returned, err
+	}
+	if cmd == drmIoctlI915GemContextGetParam && param == i915ContextParamVM {
+		vmID := binary.LittleEndian.Uint64(params[16:24])
+		if vmID > 0xffffffff {
+			return returned, linuxerr.EIO
+		}
+		if vmID != 0 {
+			if _, ok := fd.vms[uint32(vmID)]; !ok {
+				return returned, linuxerr.EIO
+			}
+		}
 	}
 	if _, err := task.CopyOutBytes(addr, params); err != nil {
 		return returned, err
@@ -871,15 +900,49 @@ func (fd *renderFD) ioctlVMControl(task *kernel.Task, cmd uintptr, addr hostarch
 	if extensions != 0 || flags != 0 || (create && vmID != 0) || (!create && vmID == 0) {
 		return 0, linuxerr.EINVAL
 	}
+
+	fd.gemMu.Lock()
+	defer fd.gemMu.Unlock()
+	if create {
+		if len(fd.vms) >= maxTrackedVMs {
+			return 0, linuxerr.ENOMEM
+		}
+		n, err := hostIoctl(fd.hostFD, cmd, params)
+		if err != nil {
+			return n, err
+		}
+		vmID = binary.LittleEndian.Uint32(params[12:16])
+		if vmID == 0 {
+			return n, linuxerr.EIO
+		}
+		if _, exists := fd.vms[vmID]; exists {
+			return n, linuxerr.EIO
+		}
+		if fd.vms == nil {
+			fd.vms = make(map[uint32]struct{})
+		}
+		fd.vms[vmID] = struct{}{}
+		if _, err := task.CopyOutBytes(addr, params); err != nil {
+			destroyParams := make([]byte, 16)
+			binary.LittleEndian.PutUint32(destroyParams[12:16], vmID)
+			_, closeErr := hostIoctl(fd.hostFD, drmIoctlI915GemVMDestroy, destroyParams)
+			if closeErr == nil {
+				delete(fd.vms, vmID)
+				return n, err
+			}
+			return n, fmt.Errorf("copying VM-create result to application failed: %v; destroying unreturned VM failed: %w", err, closeErr)
+		}
+		return n, nil
+	}
+
+	if _, ok := fd.vms[vmID]; !ok {
+		return 0, linuxerr.EINVAL
+	}
 	n, err := hostIoctl(fd.hostFD, cmd, params)
 	if err != nil {
 		return n, err
 	}
-	if create {
-		if _, err := task.CopyOutBytes(addr, params); err != nil {
-			return n, err
-		}
-	}
+	delete(fd.vms, vmID)
 	return n, nil
 }
 
@@ -1047,6 +1110,13 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	// The GEM handle table and host file description must remain consistent
 	// for the full duration of submission.
 	fd.gemMu.Lock()
+	contextID := uint32(binary.LittleEndian.Uint64(params[48:56]))
+	if contextID != 0 {
+		if _, ok := fd.contexts[contextID]; !ok {
+			fd.gemMu.Unlock()
+			return 0, linuxerr.EINVAL
+		}
+	}
 	for i := 0; i < int(objectCount); i++ {
 		handle := binary.LittleEndian.Uint32(objects[i*i915ExecObject2Size : i*i915ExecObject2Size+4])
 		if _, ok := fd.gemObjects[handle]; !ok {
