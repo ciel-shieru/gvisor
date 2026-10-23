@@ -64,12 +64,17 @@ const (
 	drmIoctlGemClose = uintptr(linux.IOW('d', 0x09, 8))
 	drmIoctlI915GetParam = uintptr(linux.IOWR('d', 0x46, 16))
 	drmIoctlI915GemCreate = uintptr(linux.IOWR('d', 0x5b, 16))
+	drmIoctlI915GemPread = uintptr(linux.IOW('d', 0x5c, 32))
+	drmIoctlI915GemPwrite = uintptr(linux.IOW('d', 0x5d, 32))
 	drmIoctlI915GemBusy = uintptr(linux.IOWR('d', 0x57, 8))
 	drmIoctlI915GemSetDomain = uintptr(linux.IOW('d', 0x5f, 12))
+	drmIoctlI915GemSWFinish = uintptr(linux.IOW('d', 0x60, 4))
 	drmIoctlI915GemSetTiling = uintptr(linux.IOWR('d', 0x61, 16))
 	drmIoctlI915GemGetTiling = uintptr(linux.IOWR('d', 0x62, 16))
+	drmIoctlI915GemGetAperture = uintptr(linux.IOR('d', 0x63, 16))
 	drmIoctlI915GemMmapGTT = uintptr(linux.IOWR('d', 0x64, 16))
 	drmIoctlI915GemMmapOffset = uintptr(linux.IOWR('d', 0x64, 32))
+	drmIoctlI915GemMadvise = uintptr(linux.IOWR('d', 0x66, 12))
 	drmIoctlI915GemExecbuffer2 = uintptr(linux.IOW('d', 0x69, 64))
 	drmIoctlI915GemExecbuffer2WR = uintptr(linux.IOWR('d', 0x69, 64))
 	drmIoctlI915GemWait = uintptr(linux.IOWR('d', 0x6c, 16))
@@ -166,8 +171,10 @@ func SupportedIoctl(cmd uintptr) bool {
 	switch cmd {
 	case drmIoctlVersion, drmIoctlGetMagic, drmIoctlGetCap, drmIoctlSetClientCap,
 		drmIoctlGemClose, drmIoctlI915GetParam, drmIoctlI915GemCreate,
+		drmIoctlI915GemPread, drmIoctlI915GemPwrite, drmIoctlI915GemSWFinish,
 		drmIoctlI915GemBusy, drmIoctlI915GemSetDomain,
-		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling,
+		drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling, drmIoctlI915GemGetAperture,
+		drmIoctlI915GemMadvise,
 		drmIoctlI915GemMmapGTT, drmIoctlI915GemMmapOffset,
 		drmIoctlI915GemExecbuffer2, drmIoctlI915GemExecbuffer2WR,
 		drmIoctlI915GemWait, drmIoctlI915GemContextCreate,
@@ -349,12 +356,22 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 		return fd.ioctlGemClose(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemCreate:
 		return fd.ioctlGemCreate(task, cmd, args[2].Pointer(), 16, 0)
+	case drmIoctlI915GemPread:
+		return fd.ioctlGemTransfer(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)), false)
+	case drmIoctlI915GemPwrite:
+		return fd.ioctlGemTransfer(task, cmd, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)), true)
+	case drmIoctlI915GemSWFinish:
+		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 4, false)
 	case drmIoctlI915GemBusy:
 		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 8, true)
 	case drmIoctlI915GemSetDomain:
 		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 12, false)
 	case drmIoctlI915GemSetTiling, drmIoctlI915GemGetTiling:
 		return fd.ioctlGEMHandleFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GemGetAperture:
+		return fd.ioctlFixed(task, cmd, args[2].Pointer(), 16, true)
+	case drmIoctlI915GemMadvise:
+		return fd.ioctlGemMadvise(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemMmapGTT:
 		return fd.ioctlGemMmapGTT(task, args[2].Pointer(), linux.IOC_SIZE(uint32(cmd)))
 	case drmIoctlI915GemMmapOffset:
@@ -392,6 +409,86 @@ func (fd *renderFD) Ioctl(ctx context.Context, _ usermem.IO, _ uintptr, args arc
 	default:
 		return 0, linuxerr.ENOTTY
 	}
+}
+
+const maxGEMTransferBytes = 16 << 20
+
+func (fd *renderFD) ioctlGemMadvise(task *kernel.Task, addr hostarch.Addr, size uint32) (uintptr, error) {
+	if size != 12 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	handle := binary.LittleEndian.Uint32(params[0:4])
+	advice := binary.LittleEndian.Uint32(params[4:8])
+	if advice > 1 {
+		return 0, linuxerr.EINVAL
+	}
+	fd.gemMu.Lock()
+	if _, ok := fd.gemObjects[handle]; !ok {
+		fd.gemMu.Unlock()
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctl(fd.hostFD, drmIoctlI915GemMadvise, params)
+	fd.gemMu.Unlock()
+	if err != nil {
+		return n, err
+	}
+	if _, err := task.CopyOutBytes(addr, params); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+// ioctlGemTransfer translates data_ptr in GEM_PREAD/GEM_PWRITE and bounds the
+// amount of memory copied or exposed to the host driver.
+func (fd *renderFD) ioctlGemTransfer(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, write bool) (uintptr, error) {
+	if size != 32 {
+		return 0, linuxerr.EINVAL
+	}
+	params := make([]byte, size)
+	if _, err := task.CopyInBytes(addr, params); err != nil {
+		return 0, err
+	}
+	handle := binary.LittleEndian.Uint32(params[0:4])
+	if binary.LittleEndian.Uint32(params[4:8]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
+	offset := binary.LittleEndian.Uint64(params[8:16])
+	length := binary.LittleEndian.Uint64(params[16:24])
+	dataAddr := hostarch.Addr(binary.LittleEndian.Uint64(params[24:32]))
+	if length > maxGEMTransferBytes {
+		return 0, linuxerr.E2BIG
+	}
+	if length != 0 && dataAddr == 0 {
+		return 0, linuxerr.EFAULT
+	}
+	data := make([]byte, int(length))
+	if write && length != 0 {
+		if _, err := task.CopyInBytes(dataAddr, data); err != nil {
+			return 0, err
+		}
+	}
+
+	fd.gemMu.Lock()
+	objectSize, ok := fd.gemObjects[handle]
+	if !ok || offset > objectSize || length > objectSize-offset {
+		fd.gemMu.Unlock()
+		return 0, linuxerr.EINVAL
+	}
+	n, err := hostIoctlI915GemTransfer(fd.hostFD, cmd, params, data)
+	fd.gemMu.Unlock()
+	if err != nil {
+		return n, err
+	}
+	if !write && length != 0 {
+		if _, err := task.CopyOutBytes(dataAddr, data); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 func (fd *renderFD) ioctlGEMHandleFixed(task *kernel.Task, cmd uintptr, addr hostarch.Addr, size uint32, copyOut bool) (uintptr, error) {
