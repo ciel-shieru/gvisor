@@ -133,8 +133,8 @@ func hostIoctlI915GemTransfer(fd int32, cmd uintptr, params, data []byte) (uintp
 	} else {
 		binary.LittleEndian.PutUint64(params[24:32], uint64(uintptr(unsafe.Pointer(&data[0]))))
 	}
-	defer copy(params[24:32], original[:])
 	n, _, errno := unix.RawSyscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&params[0])))
+	copy(params[24:32], original[:])
 	runtime.KeepAlive(params)
 	runtime.KeepAlive(data)
 	if errno != 0 {
