@@ -190,7 +190,7 @@ func registerFilesystems(k *kernel.Kernel, info *containerInfo, rdmaSnapshot *rd
 // render nodes. Primary and control nodes are rejected because this proxy does
 // not implement display or privileged DRM interfaces.
 func i915proxyRegisterDevices(info *containerInfo, vfsObj *vfs.VirtualFilesystem) error {
-	if !specutils.I915ProxyEnabled(info.spec, info.conf) {
+	if !info.conf.I915Proxy {
 		return nil
 	}
 	if info.spec.Linux == nil {
