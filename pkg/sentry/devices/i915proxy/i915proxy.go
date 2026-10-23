@@ -660,8 +660,15 @@ func (fd *renderFD) ioctlExecbuffer2(task *kernel.Task, cmd uintptr, addr hostar
 	totalRelocations := uint32(0)
 	for i := 0; i < int(objectCount); i++ {
 		base := i * i915ExecObject2Size
+		handle := binary.LittleEndian.Uint32(objects[base : base+4])
 		count := binary.LittleEndian.Uint32(objects[base+4 : base+8])
 		ptr := hostarch.Addr(binary.LittleEndian.Uint64(objects[base+8 : base+16]))
+		if handle == 0 || binary.LittleEndian.Uint64(objects[base+40:base+48]) != 0 || binary.LittleEndian.Uint64(objects[base+48:base+56]) != 0 {
+			return 0, linuxerr.EINVAL
+		}
+		if count == 0 && ptr != 0 {
+			return 0, linuxerr.EINVAL
+		}
 		if count > maxExecBufferRelocations-totalRelocations {
 			return 0, linuxerr.E2BIG
 		}
