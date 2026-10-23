@@ -195,6 +195,9 @@ func (fd *renderFD) ioctlPrimeFDToHandle(ctx context.Context, task *kernel.Task,
 			}
 			return n, linuxerr.ENOMEM
 		}
+		if fd.gemObjects == nil {
+			fd.gemObjects = make(map[uint32]uint64)
+		}
 		fd.gemObjects[handle] = dmabuf.size
 	}
 	// Restore the sandbox FD number; host FD numbers never escape the proxy.
