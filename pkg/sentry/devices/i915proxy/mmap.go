@@ -255,9 +255,13 @@ func (m renderMappable) InvalidateUnsavable(context.Context) error {
 // host file's reference-counted mapping lifecycle.
 //
 // +stateify savable
+const maxTrackedMmapOffsets = maxTrackedGEMObjects * 4
+
 type renderMappedFile struct {
 	memmap.NoBufferedIOFallback
 	file *renderMemmapFile
+	base uint64
+	length uint64
 	memoryType hostarch.MemoryType
 }
 
@@ -288,8 +292,8 @@ func (mf *renderMappedFile) FD() int {
 
 // MapInternal implements memmap.File.MapInternal.
 func (mf *renderMappedFile) MapInternal(fr memmap.FileRange, at hostarch.AccessType) (safemem.BlockSeq, error) {
-	if _, err := mf.file.memoryTypeForRange(fr.Start, fr.Length()); err != nil {
-		return safemem.BlockSeq{}, err
+	if fr.Start < mf.base || fr.Start > math.MaxInt64 || fr.Length() > math.MaxInt64-fr.Start || fr.End > mf.base+mf.length {
+		return safemem.BlockSeq{}, linuxerr.EINVAL
 	}
 	return mf.file.MapInternal(fr, at)
 }
