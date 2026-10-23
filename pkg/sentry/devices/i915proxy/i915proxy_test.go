@@ -94,6 +94,7 @@ func TestIoctlABIEncodings(t *testing.T) {
 		{name: "GEM_EXECBUFFER2", got: drmIoctlI915GemExecbuffer2, want: 0x40406469},
 		{name: "GEM_EXECBUFFER2_WR", got: drmIoctlI915GemExecbuffer2WR, want: 0xc0406469},
 		{name: "QUERY", got: drmIoctlI915Query, want: 0xc0106479},
+		{name: "GET_RESET_STATS", got: drmIoctlI915GetResetStats, want: 0xc0186472},
 		{name: "PRIME_HANDLE_TO_FD", got: drmIoctlPrimeHandleToFD, want: 0xc00c642d},
 		{name: "PRIME_FD_TO_HANDLE", got: drmIoctlPrimeFDToHandle, want: 0xc00c642e},
 	} {
