@@ -462,6 +462,10 @@ func (fd *renderFD) ioctlGemCreate(task *kernel.Task, cmd uintptr, addr hostarch
 	if requestedSize == 0 || requestedSize > math.MaxInt64 {
 		return 0, linuxerr.EINVAL
 	}
+	// The GEM_CREATE pad and GEM_CREATE_EXT flags are restricted to zero.
+	if binary.LittleEndian.Uint32(params[12:16]) != 0 {
+		return 0, linuxerr.EINVAL
+	}
 	if extensionOffset != 0 {
 		if extensionOffset+8 > int(size) || binary.LittleEndian.Uint64(params[extensionOffset:extensionOffset+8]) != 0 {
 			return 0, linuxerr.EINVAL
