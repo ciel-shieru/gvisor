@@ -65,11 +65,12 @@ func (mf *renderMemmapFile) MapInternal(fr memmap.FileRange, at hostarch.AccessT
 	if uint64(len(mf.pages))+newPages > maxInternalMapPages {
 		return safemem.BlockSeq{}, linuxerr.E2BIG
 	}
+	prot := at.Prot()
 	for off := start; off < end; off += pageSize {
 		page, ok := mf.pages[off]
 		if !ok {
 			var err error
-			page, err = unix.Mmap(int(mf.fd), int64(off), int(hostarch.PageSize), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+			page, err = unix.Mmap(int(mf.fd), int64(off), int(hostarch.PageSize), prot, unix.MAP_SHARED)
 			if err != nil {
 				return safemem.BlockSeq{}, err
 			}
