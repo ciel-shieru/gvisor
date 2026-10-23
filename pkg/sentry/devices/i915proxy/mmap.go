@@ -38,13 +38,17 @@ func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) er
 	if opts.Length > uint64(maxInternalMapPages)*uint64(hostarch.PageSize) {
 		return linuxerr.E2BIG
 	}
-	if _, err := fd.memmapFile.memoryTypeForRange(opts.Offset, opts.Length); err != nil {
+	base, info, err := fd.memmapFile.lookupOffset(opts.Offset, opts.Length)
+	if err != nil {
 		return err
 	}
-	// Use a per-mapping mappable so KVM page tables use the cache type
-	// requested when the mmap offset was obtained.
+	// Keep the validated offset metadata with this mapping. The GEM handle may
+	// be closed before the mapping is removed.
 	return vfs.GenericProxyDeviceConfigureMMap(&fd.vfsfd, renderMappable{
 		file: &fd.memmapFile,
+		base: base,
+		length: info.length,
+		memoryType: info.memoryType,
 	}, opts)
 }
 
@@ -54,19 +58,24 @@ func (fd *renderFD) ConfigureMMap(ctx context.Context, opts *memmap.MMapOpts) er
 type renderMappable struct {
 	memmap.MappableNoTrackMappings
 	file *renderMemmapFile
+	base uint64
+	length uint64
+	memoryType hostarch.MemoryType
 }
 
 // Translate implements memmap.Mappable.Translate.
 func (m renderMappable) Translate(_ context.Context, _, optional memmap.MappableRange, _ hostarch.AccessType) ([]memmap.Translation, error) {
-	memoryType, err := m.file.memoryTypeForRange(optional.Start, optional.Length())
-	if err != nil {
-		return nil, err
+	end := optional.Start + optional.Length()
+	if optional.Start < m.base || optional.Start > math.MaxInt64 || end > m.base+m.length {
+		return nil, linuxerr.EINVAL
 	}
 	return []memmap.Translation{{
 		Source: optional,
 		File: &renderMappedFile{
 			file: m.file,
-			memoryType: memoryType,
+			base: m.base,
+			length: m.length,
+			memoryType: m.memoryType,
 		},
 		Offset: optional.Start,
 		Perms: hostarch.AnyAccess,
