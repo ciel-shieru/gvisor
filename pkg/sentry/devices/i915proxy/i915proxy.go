@@ -160,8 +160,8 @@ func Register(vfsObj *vfs.VirtualFilesystem, devices []Device, useDevGofer bool)
 	return nil
 }
 
-// SupportedIoctl reports whether cmd is a fixed, explicitly implemented DRM
-// ioctl. It does not imply support for GEM, submission, mmap, or media ioctls.
+// SupportedIoctl reports whether cmd is in the proxy's reviewed ioctl allowlist.
+// It does not imply full support for every extension of the corresponding UAPI.
 func SupportedIoctl(cmd uintptr) bool {
 	switch cmd {
 	case drmIoctlVersion, drmIoctlGetMagic, drmIoctlGetCap, drmIoctlSetClientCap,
