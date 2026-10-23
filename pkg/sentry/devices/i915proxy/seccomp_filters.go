@@ -16,7 +16,6 @@ package i915proxy
 
 import (
 	"golang.org/x/sys/unix"
-	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/seccomp"
 )
 
@@ -61,14 +60,6 @@ func Filters() seccomp.SyscallRules {
 			seccomp.EqualTo(unix.MAP_SHARED),
 			seccomp.NonNegativeFD{},
 			seccomp.AnyValue{},
-		},
-		unix.SYS_MREMAP: seccomp.PerArg{
-			seccomp.AnyValue{},
-			seccomp.EqualTo(0),
-			seccomp.AnyValue{},
-			seccomp.EqualTo(linux.MREMAP_MAYMOVE | linux.MREMAP_FIXED),
-			seccomp.AnyValue{},
-			seccomp.EqualTo(0),
 		},
 	})
 }
